@@ -36,6 +36,7 @@ interface AgentDef {
 	tools: string;
 	systemPrompt: string;
 	file: string;
+	thinking?: boolean;
 }
 
 interface AgentState {
@@ -95,12 +96,16 @@ function parseAgentFile(filePath: string): AgentDef | null {
 
 		if (!frontmatter.name) return null;
 
+		const thinkingRaw = (frontmatter.thinking || "").toLowerCase().trim();
+		const thinking = thinkingRaw === "on";
+
 		return {
 			name: frontmatter.name,
 			description: frontmatter.description || "",
 			tools: frontmatter.tools || "read,grep,find,ls",
 			systemPrompt: match[2].trim(),
 			file: filePath,
+			thinking,
 		};
 	} catch {
 		return null;
@@ -333,7 +338,7 @@ export default function (pi: ExtensionAPI) {
 			"--no-extensions",
 			"--model", model,
 			"--tools", state.def.tools,
-			"--thinking", "off",
+			"--thinking", state.def.thinking ? "on" : "off",
 			"--append-system-prompt", state.def.systemPrompt,
 			"--session", agentSessionFile,
 		];
