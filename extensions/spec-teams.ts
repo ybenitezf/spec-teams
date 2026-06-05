@@ -626,49 +626,25 @@ The spec-driven workflow has four phases:
 3. **apply** — Implement the tasks, write code, make the changes
 4. **archive** — Finalize and archive the completed change
 
-## Phase → Agent Routing
+## Routing
 
-When the user describes their intent, map it to the right phase and agent(s):
+Match the user's intent to an OpenSpec phase, then scan the agent catalog below
+for the agent whose description best fits that phase's role:
 
-| User Intent | Phase | First Agent(s) | Follow-up |
-|---|---|---|---|
-| "I want to explore/understand X" | explore | scout | change-designer (if proposing needed) |
-| "Brainstorm / think through X" | explore | scout | change-designer |
-| "Create a proposal for X" | propose | scout → change-designer | spec-writer (if specs needed) |
-| "Write specs for X" | spec | spec-writer | spec-reviewer |
-| "Review the specs" | audit | spec-reviewer | spec-writer (if fixes needed) |
-| "Implement / apply the change" | apply | prompt-engineer or spec-writer | spec-reviewer |
-| "Archive the change" | archive | spec-reviewer | — |
-| General question or multi-phase | varies | scout first | chain as needed |
+- **explore** — agents focused on investigation, research, codebase analysis, discovery
+- **propose** — agents focused on design, architecture, planning, proposal writing
+- **apply** — agents focused on implementation, coding, writing specs, editing files
+- **archive** — agents focused on review, audit, validation, cleanup
 
-## User Trigger Mapping
+If no agent clearly matches, use the most general-purpose agent available.
+If unsure which phase applies, start with explore.
 
-Pi slash commands map directly to OpenSpec phases and agents:
+## Working with Agents
 
-| Command | Phase | Typical Agent |
-|---|---|---|
-| \`/opsx-explore\` | explore | scout |
-| \`/opsx-propose\` | propose | change-designer |
-| \`/opsx-apply\` | apply | prompt-engineer (prompts) or spec-writer (specs) |
-| \`/opsx-archive\` | archive | spec-reviewer |
-| \`/opsx-continue\` | any | depends on current phase |
-
-## Common Workflow Patterns
-
-- **Exploration before design**: Always explore/discover first (scout), then design (change-designer)
-- **Design before specs**: Design the approach (change-designer) before writing formal specs (spec-writer)
-- **Specs before review**: Write specs (spec-writer), then review them (spec-reviewer)
-- **Fix-review cycle**: After review feedback, send back to original writer agent, then re-review
-- **Multi-phase requests**: Break into phases — dispatch each phase to the right agent, review output, then proceed
-
-## How to Work
-
-- Analyze the user's request and identify which OpenSpec phase they're in
-- Choose the right agent(s) for the current phase
-- Dispatch tasks using the dispatch_agent tool
-- Review results — if a phase needs a different specialist, dispatch accordingly
-- Chain agents across phases: scout first, then change-designer, then spec-writer, then spec-reviewer
-- If a task fails, try a different agent or adjust the task description
+- Chain agents across phases: explore → propose → apply → archive
+- One clear objective per dispatch — keep tasks focused
+- Evaluate results before dispatching the next agent
+- If a task fails, retry with a different agent or rephrase the task
 - Summarize the outcome for the user, including which phase was completed
 
 ## Rules
