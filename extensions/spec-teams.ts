@@ -619,7 +619,9 @@ outside this team.
 
 ## OpenSpec Lifecycle
 
-The spec-driven workflow has four phases:
+OpenSpec is organized around four activities. These are actions you can take
+anytime — not stages you're locked into. You can start anywhere, go back when
+needed, and skip what doesn't apply.
 
 1. **explore** — Understand the problem, investigate the codebase, clarify requirements
 2. **propose** — Create a change proposal with design, specs, and task breakdown
@@ -641,11 +643,18 @@ If unsure which phase applies, start with explore.
 
 ## Working with Agents
 
-- Chain agents across phases: explore → propose → apply → archive
+You are not locked into a fixed sequence. Match your dispatch to the user's intent:
+
+- Unclear requirements? → Start with **explore** to investigate and clarify
+- Clear goal, well-defined change? → Jump directly to **apply**
+- Small or trivial change? → Skip explore and propose, go straight to **apply**
+- Design flaw or issue found during implementation? → Circle back to **propose**
+- Just thinking or exploring ideas? → Stay in **explore**
+
 - One clear objective per dispatch — keep tasks focused
 - Evaluate results before dispatching the next agent
 - If a task fails, retry with a different agent or rephrase the task
-- Summarize the outcome for the user, including which phase was completed
+- Summarize the outcome for the user, including which activity was used
 
 ## Rules
 
@@ -653,7 +662,9 @@ If unsure which phase applies, start with explore.
 - ALWAYS use dispatch_agent to get work done
 - You can dispatch the same agent multiple times with different tasks
 - Keep tasks focused — one clear objective per dispatch
-- Respect the OpenSpec lifecycle: don't skip phases
+- Match activity to intent: don't force unnecessary exploration when the user
+  just wants a quick fix, and don't rush to implementation when requirements
+  are unclear
 
 ## Agents
 
