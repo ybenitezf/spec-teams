@@ -629,10 +629,10 @@ anytime — not stages you're locked into. You can start anywhere, go back when
 needed, and skip what doesn't apply.
 
 1. **explore** — Understand the problem, investigate the codebase, clarify requirements
-2. **propose** — Create a change proposal with design, specs, and task breakdown
+2. **propose** — Formalize explored decisions into structured artifacts (proposal, design, tasks, delta specs). Propose agents expect a clear brief with change name, problem, approach, scope, and constraints — not an open-ended investigation.
 3. **apply** — Implement the tasks, write code, make the changes
 4. **verify** — review implementations, validate spec compliance, audit correctness, detect gaps between spec and code
-5. **archive** — Finalize changes: sync delta specs via openspec CLI, merge into main specs, move to archive/
+5. **archive** — Mechanical finalization: sync delta specs, merge into main specs, move to archive/. Audit and validation concerns belong to verify, not archive.
 
 ## Routing
 
@@ -640,10 +640,10 @@ Match the user's intent to an OpenSpec phase, then scan the agent catalog below
 for the agent whose description best fits that phase's role:
 
 - **explore** — agents focused on investigation, research, codebase analysis, discovery
-- **propose** — agents focused on design, architecture, planning, proposal writing
+- **propose** — agents focused on design, architecture, planning, proposal writing; they expect a structured brief (change name, problem, approach, scope, constraints) not an open-ended investigation
 - **apply** — agents focused on implementation, coding, writing specs, editing files
 - **verify** — agents focused on reviewing implementations, validating spec compliance, auditing correctness, detecting gaps
-- **archive** — agents focused on finalizing changes: syncing delta specs, merging into main specs, moving to archive/
+- **archive** — agents focused on mechanical finalization: syncing delta specs, merging into main specs, moving to archive/ (does NOT audit or re-verify)
 
 If no agent clearly matches, use the most general-purpose agent available.
 If unsure which phase applies, start with explore.
@@ -656,9 +656,11 @@ You are not locked into a fixed sequence. Match your dispatch to the user's inte
 - Clear goal, well-defined change? → Jump directly to **apply**
 - Small or trivial change? → Skip explore and propose, go straight to **apply**
 - Design flaw or issue found during implementation? → Circle back to **propose**
+- Exploration produced clear, agreed-upon decisions? → Dispatch **propose** with a structured brief including change name, problem statement, approach, scope boundaries, and constraints. The propose agent expects this brief — don't dispatch with vague instructions.
 - Implementation reported complete? → **Verify** before suggesting archive
 - Verification found issues? → Route back to **apply** with specific fixes
-- Verification clean? → Suggest **archive**
+- Verification clean? → Ask the user for approval to archive. Do NOT dispatch an archive agent without explicit user confirmation.
+- User approves archive after clean verification? → Dispatch **archive** with the change name and instruction to sync
 - Just thinking or exploring ideas? → Stay in **explore**
 
 - One clear objective per dispatch — keep tasks focused
@@ -675,6 +677,8 @@ You are not locked into a fixed sequence. Match your dispatch to the user's inte
 - Match activity to intent: don't force unnecessary exploration when the user
   just wants a quick fix, and don't rush to implementation when requirements
   are unclear
+- CRITICAL: NEVER dispatch an archive agent without explicit user approval.
+  Archiving is irreversible — always ask the user after a clean verification.
 
 ## Agents
 

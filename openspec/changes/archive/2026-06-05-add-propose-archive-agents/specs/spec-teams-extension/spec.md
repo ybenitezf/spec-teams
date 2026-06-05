@@ -1,47 +1,6 @@
-# spec-teams-extension Specification
+# spec-teams-extension Delta Spec
 
-## Purpose
-TBD - created by archiving change integrate-spec-teams. Update Purpose after archive.
-## Requirements
-### Requirement: Extension file at correct location
-The project SHALL contain `extensions/spec-teams.ts` as its extension entry point.
-
-#### Scenario: File exists
-- **WHEN** the project is checked out
-- **THEN** `extensions/spec-teams.ts` exists and exports a default function
-
-#### Scenario: Placeholder removed
-- **WHEN** the project is checked out
-- **THEN** `extensions/index.ts` does NOT exist
-
-### Requirement: Extension loads in Pi
-The extension SHALL load without errors when Pi is launched with `-e ./extensions/spec-teams.ts`.
-
-#### Scenario: Successful load
-- **WHEN** running `pi -e ./extensions/spec-teams.ts -p "hello"`
-- **THEN** Pi starts without import or runtime errors
-- **AND** the extension's `session_start` handler fires
-
-### Requirement: Agent dispatch tool
-The extension SHALL register a `dispatch_agent` tool that spawns specialist agent Pi processes.
-
-#### Scenario: Tool registered
-- **WHEN** the extension loads
-- **THEN** the `dispatch_agent` tool is available for use via the Pi agent
-
-### Requirement: Team selection command
-The extension SHALL register a `/specs-team` command to switch the active team.
-
-#### Scenario: Command registered
-- **WHEN** the extension loads
-- **THEN** the `/specs-team` command is available in the Pi session
-
-### Requirement: Agent listing command
-The extension SHALL register a `/specs-list` command to display loaded agents and their status.
-
-#### Scenario: Command registered
-- **WHEN** the extension loads
-- **THEN** the `/specs-list` command is available in the Pi session
+## MODIFIED Requirements
 
 ### Requirement: OpenSpec-aware system prompt
 The extension SHALL override the system prompt on `before_agent_start` with OpenSpec lifecycle awareness and agent routing instructions. The lifecycle SHALL describe five fluid activities: explore, propose, apply, verify, and archive. Each activity SHALL be described with general role keywords for description-based agent matching (no hardcoded agent names). The archive activity SHALL be described as focused on mechanical finalization (syncing delta specs via openspec CLI, merging into main specs, moving to archive/) — audit and validation concerns SHALL belong to the verify activity. The propose activity SHALL be described as focused on formalizing explored decisions into structured artifacts and SHALL include guidance that propose agents expect a clear brief (not an open-ended investigation). The "Working with Agents" section SHALL include guidance for each activity transition including: exploration that produces clear decisions SHOULD lead to dispatching propose with a structured brief; archiving SHALL only be suggested after a clean verification AND user approval. The system prompt SHALL NOT contain a static lookup table mapping phases to specific agent names. The system prompt SHALL NOT contain pipeline-enforcing language.
@@ -71,13 +30,6 @@ The extension SHALL override the system prompt on `before_agent_start` with Open
 - **WHEN** an agent starts
 - **THEN** the system prompt still does NOT contain hardcoded agent names in routing instructions
 - **AND** the system prompt still does NOT contain pipeline-enforcing language
-
-### Requirement: Dashboard widget
-The extension SHALL render a compact single-line dashboard widget in the TUI showing agent status, context usage, and active task.
-
-#### Scenario: Widget rendered
-- **WHEN** the extension loads in TUI mode
-- **THEN** a `spec-team` widget is registered and visible showing loaded agents
 
 ### Requirement: Intent-based routing guidance
 The system prompt SHALL include guidance that matches the dispatcher's activity choice to user intent: quick fixes SHALL NOT force unnecessary exploration, unclear requirements SHALL NOT be rushed to implementation, exploration that produces clear decisions SHALL lead to dispatching propose with a structured brief (change name, problem, approach, scope, constraints), implementations reported complete SHALL be verified before suggesting archive, verification issues SHALL be routed back to apply with specific fix tasks, and a clean verification SHALL lead the dispatcher to ask the user for archive approval before dispatching the archive agent.
@@ -110,39 +62,3 @@ The system prompt SHALL include guidance that matches the dispatcher's activity 
 #### Scenario: User approves archive
 - **WHEN** the user confirms archive after a clean verification
 - **THEN** the dispatcher SHALL dispatch the archive agent with the change name and instruction to sync
-
-### Requirement: Agent Thinking Flag
-The agent definition parser SHALL extract an optional `thinking` field from agent Markdown frontmatter, accepting values `on` or `off`. When absent, the field SHALL default to `off`.
-
-#### Scenario: Thinking flag present and on
-- **WHEN** an agent `.md` file contains `thinking: on`
-- **THEN** `parseAgentFile()` returns a definition with `thinking: true`
-
-#### Scenario: Thinking flag present and off
-- **WHEN** an agent `.md` file contains `thinking: off`
-- **THEN** `parseAgentFile()` returns a definition with `thinking: false`
-
-#### Scenario: Thinking flag absent
-- **WHEN** an agent `.md` file does NOT contain a `thinking` field
-- **THEN** `parseAgentFile()` returns a definition with `thinking: false` (default `off`)
-
-#### Scenario: Unknown thinking value
-- **WHEN** an agent `.md` file contains `thinking: unknown`
-- **THEN** `parseAgentFile()` treats it as `off` and does NOT fail
-
-### Requirement: Thinking flag controls dispatched agent reasoning
-The `dispatchAgent()` function SHALL use the agent definition's `thinking` value to set the `--thinking` flag when spawning the child `pi` process. When `thinking` is `true`, the child process SHALL be spawned with `--thinking on`. When `thinking` is `false` or absent, the child process SHALL be spawned with `--thinking off`.
-
-#### Scenario: Agent with thinking on gets reasoning
-- **WHEN** a task is dispatched to an agent with `thinking: true`
-- **THEN** the spawned `pi` process receives `--thinking on`
-
-#### Scenario: Agent with thinking off gets no reasoning
-- **WHEN** a task is dispatched to an agent with `thinking: false` or no `thinking` field
-- **THEN** the spawned `pi` process receives `--thinking off`
-
-#### Scenario: Existing behavior preserved for agents without thinking field
-- **WHEN** a task is dispatched to an agent whose definition has no `thinking` field
-- **THEN** behavior is identical to before this change (`--thinking off`)
-- **AND** the change is non-breaking
-
