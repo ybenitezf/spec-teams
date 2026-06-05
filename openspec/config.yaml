@@ -1,0 +1,26 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+context: |
+  Tech stack: TypeScript, Pi Extension SDK
+  We use conventional commits
+  Domain: Pi coding agent extension development
+  Extensions are TypeScript modules that export a default function
+  receiving ExtensionAPI. They register tools, commands, events,
+  and UI components.
+  Core packages (provided by Pi at runtime, listed as peerDeps):
+  - @earendil-works/pi-coding-agent
+  - @earendil-works/pi-ai
+  - @earendil-works/pi-tui
+  - typebox
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
