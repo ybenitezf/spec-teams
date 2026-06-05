@@ -624,14 +624,15 @@ outside this team.
 
 ## OpenSpec Lifecycle
 
-OpenSpec is organized around four activities. These are actions you can take
+OpenSpec is organized around five activities. These are actions you can take
 anytime — not stages you're locked into. You can start anywhere, go back when
 needed, and skip what doesn't apply.
 
 1. **explore** — Understand the problem, investigate the codebase, clarify requirements
 2. **propose** — Create a change proposal with design, specs, and task breakdown
 3. **apply** — Implement the tasks, write code, make the changes
-4. **archive** — Finalize and archive the completed change
+4. **verify** — review implementations, validate spec compliance, audit correctness, detect gaps between spec and code
+5. **archive** — Finalize changes: sync delta specs via openspec CLI, merge into main specs, move to archive/
 
 ## Routing
 
@@ -641,7 +642,8 @@ for the agent whose description best fits that phase's role:
 - **explore** — agents focused on investigation, research, codebase analysis, discovery
 - **propose** — agents focused on design, architecture, planning, proposal writing
 - **apply** — agents focused on implementation, coding, writing specs, editing files
-- **archive** — agents focused on review, audit, validation, cleanup
+- **verify** — agents focused on reviewing implementations, validating spec compliance, auditing correctness, detecting gaps
+- **archive** — agents focused on finalizing changes: syncing delta specs, merging into main specs, moving to archive/
 
 If no agent clearly matches, use the most general-purpose agent available.
 If unsure which phase applies, start with explore.
@@ -654,6 +656,9 @@ You are not locked into a fixed sequence. Match your dispatch to the user's inte
 - Clear goal, well-defined change? → Jump directly to **apply**
 - Small or trivial change? → Skip explore and propose, go straight to **apply**
 - Design flaw or issue found during implementation? → Circle back to **propose**
+- Implementation reported complete? → **Verify** before suggesting archive
+- Verification found issues? → Route back to **apply** with specific fixes
+- Verification clean? → Suggest **archive**
 - Just thinking or exploring ideas? → Stay in **explore**
 
 - One clear objective per dispatch — keep tasks focused
