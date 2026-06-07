@@ -31,6 +31,33 @@ The task string from the dispatcher SHALL contain a structured brief with:
 If the task string lacks any critical section (especially change name or
 problem), return `need-input` describing what's missing.
 
+## Exploration Findings
+
+Before creating artifacts, check for exploration findings from the explore agent.
+The explore agent may have written a findings file documenting deeper context —
+alternatives considered, constraints discovered, edge cases, and user motivations
+— that goes beyond the structured brief in your task string.
+
+### Check for findings file
+
+1. Determine the change name from the task string (the **Change name** field)
+2. Check if `.pi/spec-sessions/explore-<change-name>.md` exists using `bash: ls .pi/spec-sessions/explore-<change-name>.md`
+
+### If findings file exists
+
+- Read it with the `read` tool
+- Use the context to inform your artifacts:
+  - **proposal.md**: Incorporate alternatives considered, constraints, and user motivations
+  - **design.md**: Include tradeoff analysis from rejected alternatives, edge case handling
+  - **tasks.md**: Include edge case handling tasks, reference constraints
+- After reading and incorporating the findings, delete the file with `bash: rm .pi/spec-sessions/explore-<change-name>.md`
+- Do NOT re-investigate decisions already recorded in the findings
+
+### If findings file is absent
+
+- Proceed normally with only the structured brief from your task string
+- No error or warning needed — the user may have jumped directly to propose without explore
+
 ## Procedure
 
 Follow the `openspec-propose` skill exactly. Use the `<available_skills>`

@@ -79,6 +79,33 @@ The extension SHALL render a compact single-line dashboard widget in the TUI sho
 - **WHEN** the extension loads in TUI mode
 - **THEN** a `spec-team` widget is registered and visible showing loaded agents
 
+### Requirement: Dashboard rows use visual-width truncation
+
+The `renderAgentRow()` function in the dashboard widget SHALL use `truncateToWidth()` from `@earendil-works/pi-tui` for all text truncation rather than a character-count based truncation.
+
+#### Scenario: Row with emoji does not exceed terminal width
+
+- **WHEN** an agent's `lastWork` or `task` description contains double-width characters (emoji like ✅, ❌, or CJK characters)
+- **AND** the dashboard row is rendered at terminal width `W`
+- **THEN** the visible width of the rendered row SHALL NOT exceed `W`
+- **AND** Pi SHALL NOT crash with a line-width exception
+
+#### Scenario: Row with ASCII-only text renders correctly
+
+- **WHEN** an agent's `lastWork` or `task` description contains only single-width ASCII characters
+- **THEN** the dashboard row renders identically to before the change (no regression)
+
+#### Scenario: Row safety net catches off-by-one
+
+- **WHEN** the budget calculation in `renderAgentRow()` produces a string whose `visibleWidth()` exceeds the terminal width, regardless of cause
+- **THEN** a post-render guard SHALL re-truncate the row with `truncateToWidth(result, width)` to prevent a crash
+
+#### Scenario: Extremely narrow terminal fallback
+
+- **WHEN** the terminal width is less than 40 columns
+- **THEN** the bare-minimum fallback branch in `renderAgentRow()` SHALL also use visual-width truncation
+- **AND** the fallback row SHALL NOT exceed the terminal width
+
 ### Requirement: Intent-based routing guidance
 The system prompt SHALL include guidance that matches the dispatcher's activity choice to user intent: quick fixes SHALL NOT force unnecessary exploration, unclear requirements SHALL NOT be rushed to implementation, exploration that produces clear decisions SHALL lead to dispatching propose with a structured brief (change name, problem, approach, scope, constraints), implementations reported complete SHALL be verified before suggesting archive, verification issues SHALL be routed back to apply with specific fix tasks, and a clean verification SHALL lead the dispatcher to ask the user for archive approval before dispatching the archive agent.
 
@@ -145,4 +172,68 @@ The `dispatchAgent()` function SHALL use the agent definition's `thinking` value
 - **WHEN** a task is dispatched to an agent whose definition has no `thinking` field
 - **THEN** behavior is identical to before this change (`--thinking off`)
 - **AND** the change is non-breaking
+
+### Requirement: Explore relay protocol in system prompt
+The dispatcher's system prompt SHALL include instructions for the explore relay protocol: when an explore agent is available on the team, exploration SHALL be conducted through multi-turn dispatch with the explore agent. The dispatcher SHALL relay explore agent responses to the user and relay user responses back to the explore agent via continued dispatches.
+
+#### Scenario: Dispatcher relays explore responses to user
+- **WHEN** the explore agent returns `need-input` with analysis and questions
+- **THEN** the dispatcher presents the explore agent's response to the user
+- **AND** the dispatcher waits for the user's response before dispatching again
+
+#### Scenario: Dispatcher continues explore session with user response
+- **WHEN** the user responds to an explore agent's question
+- **THEN** the dispatcher dispatches the explore agent again with the user's message
+- **AND** the explore agent resumes its session automatically
+
+#### Scenario: Dispatcher recognizes ready-to-propose
+- **WHEN** the explore agent returns `Status: ready-to-propose` with a structured brief
+- **THEN** the dispatcher SHALL extract the structured brief (change name, problem, approach, scope, constraints)
+- **AND** the dispatcher SHALL dispatch the propose agent with the structured brief as the task
+
+#### Scenario: Dispatcher recognizes done-exploring
+- **WHEN** the explore agent returns `Status: done-exploring`
+- **THEN** the dispatcher SHALL present the summary to the user
+- **AND** the dispatcher SHALL return to normal operation without creating a change
+
+### Requirement: Explore multi-turn routing scenarios
+The system prompt's "Working with Agents" section SHALL include guidance for the explore multi-turn flow: the explore agent may return `need-input` repeatedly as the conversation develops; each time the dispatcher relays and waits for user input; when `ready-to-propose` is returned, the dispatcher routes to the propose agent with the provided brief; when `done-exploring` is returned, no further action is needed.
+
+#### Scenario: Multiple need-input rounds
+- **WHEN** the explore agent returns `need-input` for a second time
+- **THEN** the dispatcher continues relaying messages without treating the repeated signal as an error
+
+#### Scenario: Explore to propose handoff is automatic
+- **WHEN** the explore agent returns `ready-to-propose`
+- **THEN** the dispatcher dispatches propose without asking the user for confirmation about the handoff
+
+#### Scenario: Explore ends without artifacts
+- **WHEN** the explore agent returns `done-exploring`
+- **THEN** the dispatcher does NOT attempt to dispatch propose or create any artifacts
+
+### Requirement: Subagent response completeness
+The `dispatch_agent` tool SHALL pass the complete subagent output to the dispatcher model without truncation. The dispatcher model SHALL receive the full text content of the subagent response so that status signal blocks (e.g., `Status: need-input`, `Status: ready-to-propose`) at the end of the response are always visible.
+
+#### Scenario: Long explore response with status block at end
+- **WHEN** an explore agent returns a response exceeding 8000 characters
+- **AND** the status block is at the end of the response
+- **THEN** the dispatcher model receives the full response including the status block
+- **AND** the dispatcher can detect and act on the status signal
+
+#### Scenario: Short response unaffected
+- **WHEN** a subagent returns a response under any previous truncation threshold
+- **THEN** the dispatcher model receives the complete response unchanged
+
+### Requirement: Session storage outside repository
+The extension SHALL store subagent session files at `~/.pi/spec-teams/<encoded-cwd>/` where `<encoded-cwd>` is an encoded representation of the project's absolute working directory. Session files SHALL NOT be stored inside the project repository directory.
+
+#### Scenario: Session directory is outside the project
+- **WHEN** the extension initializes in a project at `/home/user/projects/my-app`
+- **THEN** subagent sessions are written to `~/.pi/spec-teams/<encoded-cwd>/`
+- **AND** no session files are created inside `/home/user/projects/my-app/.pi/spec-sessions/`
+
+#### Scenario: Different projects have isolated sessions
+- **WHEN** the extension runs in two different project directories
+- **THEN** each project's subagent sessions are stored under distinct encoded-cwd directories
+- **AND** a `session_start` event in one project does not affect sessions in the other
 

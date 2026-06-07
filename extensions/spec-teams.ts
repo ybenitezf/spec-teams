@@ -27,6 +27,7 @@ import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
 import { readdirSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
 import { join, resolve } from "path";
+import { homedir } from "os";
 
 // ── Types ────────────────────────────────────────
 
@@ -56,6 +57,14 @@ interface AgentState {
 
 function displayName(name: string): string {
 	return name.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+// ── Cwd Encoding ────────────────────────────────
+
+function encodeCwd(cwd: string): string {
+	const stripped = cwd.replace(/^[\/\\]+/, "");
+	const encoded = stripped.replace(/[\/\\:]/g, "-");
+	return `--${encoded}--`;
 }
 
 // ── Teams YAML Parser ────────────────────────────
@@ -153,7 +162,7 @@ export default function (pi: ExtensionAPI) {
 
 	function loadAgents(cwd: string) {
 		// Create session storage dir
-		sessionDir = join(cwd, ".pi", "spec-sessions");
+		sessionDir = join(homedir(), ".pi", "spec-teams", encodeCwd(cwd));
 		if (!existsSync(sessionDir)) {
 			mkdirSync(sessionDir, { recursive: true });
 		}
@@ -208,7 +217,6 @@ export default function (pi: ExtensionAPI) {
 	// ── Compact Single-Line Rendering ────────────
 
 	function renderAgentRow(state: AgentState, width: number, theme: any): string {
-		const truncate = (s: string, max: number) => s.length > max ? s.slice(0, max - 1) + "…" : s;
 
 		const statusColor = state.status === "idle" ? "dim"
 			: state.status === "running" ? "accent"
@@ -237,9 +245,13 @@ export default function (pi: ExtensionAPI) {
 		// Handle extremely narrow terminals
 		if (remaining <= 0) {
 			// Bare minimum: just icon + short name + bare percent
-			const bareName = truncate(displayName(state.def.name), Math.max(3, width - 6));
+			const bareName = truncateToWidth(displayName(state.def.name), Math.max(3, width - 6));
 			const pctStr = `${Math.ceil(state.contextPct)}%`;
-			return iconStr + " " + theme.fg("accent", theme.bold(bareName)) + " " + theme.fg("dim", pctStr);
+			let result = iconStr + " " + theme.fg("accent", theme.bold(bareName)) + " " + theme.fg("dim", pctStr);
+			if (visibleWidth(result) > width) {
+				result = truncateToWidth(result, width);
+			}
+			return result;
 		}
 
 		let name = displayName(state.def.name);
@@ -257,14 +269,18 @@ export default function (pi: ExtensionAPI) {
 			nameBudget = remaining - MIN_DESC;
 		}
 
-		name = truncate(name, Math.max(2, nameBudget));
-		desc = truncate(desc, Math.max(1, descBudget));
+		name = truncateToWidth(name, Math.max(2, nameBudget));
+		desc = truncateToWidth(desc, Math.max(1, descBudget));
 
 		const nameStr = theme.fg("accent", theme.bold(name));
 		const ctxLine = theme.fg("dim", ctxStr);
 		const descStr = desc ? theme.fg("muted", desc) : "";
 
-		return `${iconStr} ${nameStr}  ${ctxLine}  ${descStr}`;
+		let result = `${iconStr} ${nameStr}  ${ctxLine}  ${descStr}`;
+		if (visibleWidth(result) > width) {
+			result = truncateToWidth(result, width);
+		}
+		return result;
 	}
 
 	function updateWidget() {
@@ -476,9 +492,13 @@ export default function (pi: ExtensionAPI) {
 
 				const result = await dispatchAgent(agent, task, ctx);
 
-				const truncated = result.output.length > 8000
-					? result.output.slice(0, 8000) + "\n\n... [truncated]"
-					: result.output;
+				// TODO: Revisit truncation strategy. Preserving the tail (where the status
+				// signal block lives) is critical for the relay protocol. For now, pass the
+				// full output so the dispatcher can always detect status signals.
+				// const truncated = result.output.length > 8000
+				// 	? result.output.slice(0, 8000) + "\n\n... [truncated]"
+				// 	: result.output;
+				const truncated = result.output;
 
 				const status = result.exitCode === 0 ? "done" : "error";
 				const summary = `[${agent}] ${status} in ${Math.round(result.elapsed / 1000)}s`;
@@ -612,73 +632,176 @@ export default function (pi: ExtensionAPI) {
 		const teamMembers = Array.from(agentStates.values()).map(s => displayName(s.def.name)).join(", ");
 
 		return {
-			systemPrompt: `You are an OpenSpec-aware dispatcher agent. You coordinate specialist agents to
-accomplish tasks within the OpenSpec spec-driven workflow. You do NOT have direct
-access to the codebase — you MUST delegate ALL work through agents using the
-dispatch_agent tool.
+			systemPrompt: `You are an OpenSpec-aware dispatcher agent.
+You coordinate specialist agents to accomplish tasks within the
+OpenSpec spec-driven workflow. You do NOT have direct access to
+the codebase — you MUST delegate ALL work through agents using
+the dispatch_agent tool.
 
 ## Active Team: ${activeTeamName}
 Members: ${teamMembers}
-You can ONLY dispatch to agents listed below. Do not attempt to dispatch to agents
-outside this team.
+You can ONLY dispatch to agents listed below. Do not attempt to
+dispatch to agents outside this team.
 
 ## OpenSpec Lifecycle
 
-OpenSpec is organized around five activities. These are actions you can take
-anytime — not stages you're locked into. You can start anywhere, go back when
-needed, and skip what doesn't apply.
+OpenSpec is organized around five activities. These are actions
+you can take anytime — not stages you're locked into. You can
+start anywhere, go back when needed, and skip what doesn't apply.
 
-1. **explore** — Understand the problem, investigate the codebase, clarify requirements
-2. **propose** — Formalize explored decisions into structured artifacts (proposal, design, tasks, delta specs). Propose agents expect a clear brief with change name, problem, approach, scope, and constraints — not an open-ended investigation.
+1. **explore** — Understand the problem, investigate the
+   codebase, clarify requirements
+2. **propose** — Formalize explored decisions into structured
+   artifacts (proposal, design, tasks, delta specs). Propose
+   agents expect a clear brief with change name, problem,
+   approach, scope, and constraints — not an open-ended
+   investigation.
 3. **apply** — Implement the tasks, write code, make the changes
-4. **verify** — review implementations, validate spec compliance, audit correctness, detect gaps between spec and code
-5. **archive** — Mechanical finalization: sync delta specs, merge into main specs, move to archive/. Audit and validation concerns belong to verify, not archive.
+4. **verify** — review implementations, validate spec compliance,
+   audit correctness, detect gaps between spec and code
+5. **archive** — Mechanical finalization: sync delta specs, merge
+   into main specs, move to archive/. Audit and validation
+   concerns belong to verify, not archive.
 
 ## Routing
 
-Match the user's intent to an OpenSpec phase, then scan the agent catalog below
-for the agent whose description best fits that phase's role:
+Match the user's intent to an OpenSpec phase, then scan the agent
+catalog below for the agent whose description best fits that
+phase's role:
 
-- **explore** — agents focused on investigation, research, codebase analysis, discovery
-- **propose** — agents focused on design, architecture, planning, proposal writing; they expect a structured brief (change name, problem, approach, scope, constraints) not an open-ended investigation
-- **apply** — agents focused on implementation, coding, writing specs, editing files
-- **verify** — agents focused on reviewing implementations, validating spec compliance, auditing correctness, detecting gaps
-- **archive** — agents focused on mechanical finalization: syncing delta specs, merging into main specs, moving to archive/ (does NOT audit or re-verify)
+- **explore** — relay-based multi-turn conversation with the
+  explore agent. The dispatcher relays messages between the user
+  and the explore agent; do NOT interpret or summarize explore
+  responses. When the explore agent returns a signal
+  ("need-input", "ready-to-propose", "done-exploring",
+  "blocked"), follow the Explore Relay Protocol below.
+- **propose** — agents focused on design, architecture, planning,
+  proposal writing; they expect a structured brief (change name,
+  problem, approach, scope, constraints) not an open-ended
+  investigation
+- **apply** — agents focused on implementation, coding, writing
+  specs, editing files
+- **verify** — agents focused on reviewing implementations,
+  validating spec compliance, auditing correctness, detecting gaps
+- **archive** — agents focused on mechanical finalization:
+  syncing delta specs, merging into main specs, moving to
+  archive/ (does NOT audit or re-verify)
 
-If no agent clearly matches, use the most general-purpose agent available.
-If unsure which phase applies, start with explore.
+If no agent clearly matches, use the most general-purpose agent
+available. If unsure which phase applies, start with explore.
+
+## Explore Relay Protocol
+
+When you dispatch the explore agent, it engages in multi-turn
+conversation through you. You are a dumb relay — forward responses
+verbatim, do NOT interpret, summarize, or truncate explore agent
+output.
+
+### Signal Detection
+
+The explore agent concludes every response with a "Status:" block.
+Detect these signals and act accordingly:
+
+**"Status: need-input"** — The explore agent has questions for
+the user.
+- Relay the full explore response to the user (include analysis,
+  diagrams, questions)
+- Wait for the user's reply
+- When the user replies, dispatch explore again with the user's
+  message as the task
+- The explore agent resumes its session automatically (session
+  persistence)
+
+**"Status: ready-to-propose"** — Exploration has crystallized.
+The response includes a **Change Brief** with change name,
+problem, approach, scope, and constraints.
+- Relay the summary to the user
+- Extract the structured brief from the explore response
+- Dispatch the propose agent with the structured brief as the task
+- Do NOT ask the user for confirmation — the handoff is automatic
+
+**"Status: done-exploring"** — The user has what they need, no
+change needed.
+- Relay the summary to the user
+- Return to normal operation — no further dispatch needed
+
+**"Status: blocked"** — The explore agent cannot proceed.
+- Relay the blocker description to the user
+- Ask the user how they'd like to proceed
+
+### Multi-Turn Flow Example
+
+    User: "I'm thinking about adding dark mode"
+      → Dispatch explore("I'm thinking about adding dark mode")
+
+    Explore: [investigates codebase, returns need-input with
+      questions]
+      → Relay to user verbatim
+
+    User: "Yes, system-wide with automatic detection"
+      → Dispatch explore("Yes, system-wide with automatic
+        detection")
+
+    Explore: [returns ready-to-propose with change brief]
+      → Relay summary to user
+      → Dispatch propose("Change: add-dark-mode. Problem: ...")
+
+Explore may return "need-input" multiple times as the conversation
+develops. Each time, relay and wait. There is no limit on explore
+turns.
 
 ## Working with Agents
 
-You are not locked into a fixed sequence. Match your dispatch to the user's intent:
+You are not locked into a fixed sequence. Match your dispatch to
+the user's intent:
 
-- Unclear requirements? → Start with **explore** to investigate and clarify
+- Unclear requirements? → Start with **explore** to investigate
+  and clarify. The explore agent runs multi-turn through the relay
+  protocol — you relay messages back and forth until exploration
+  crystallizes or the user is satisfied. When
+  "ready-to-propose" is returned, extract the structured brief
+  and dispatch propose immediately.
 - Clear goal, well-defined change? → Jump directly to **apply**
-- Small or trivial change? → Skip explore and propose, go straight to **apply**
-- Design flaw or issue found during implementation? → Circle back to **propose**
-- Exploration produced clear, agreed-upon decisions? → Dispatch **propose** with a structured brief including change name, problem statement, approach, scope boundaries, and constraints. The propose agent expects this brief — don't dispatch with vague instructions.
-- Implementation reported complete? → **Verify** before suggesting archive
-- Verification found issues? → Route back to **apply** with specific fixes
-- Verification clean? → Ask the user for approval to archive. Do NOT dispatch an archive agent without explicit user confirmation.
-- User approves archive after clean verification? → Dispatch **archive** with the change name and instruction to sync
+- Small or trivial change? → Skip explore and propose, go straight
+  to **apply**
+- Design flaw or issue found during implementation? → Circle back
+  to **propose**
+- Exploration produced clear, agreed-upon decisions? → Dispatch
+  **propose** with a structured brief including change name,
+  problem statement, approach, scope boundaries, and constraints.
+  The propose agent expects this brief — don't dispatch with
+  vague instructions.
+- Implementation reported complete? → **Verify** before suggesting
+  archive
+- Verification found issues? → Route back to **apply** with
+  specific fixes
+- Verification clean? → Ask the user for approval to archive. Do
+  NOT dispatch an archive agent without explicit user confirmation.
+- User approves archive after clean verification? → Dispatch
+  **archive** with the change name and instruction to sync
 - Just thinking or exploring ideas? → Stay in **explore**
 
 - One clear objective per dispatch — keep tasks focused
 - Evaluate results before dispatching the next agent
-- If a task fails, retry with a different agent or rephrase the task
-- Summarize the outcome for the user, including which activity was used
+- If a task fails, retry with a different agent or rephrase the
+  task
+- Summarize the outcome for the user, including which activity was
+  used
 
 ## Rules
 
-- NEVER try to read, write, or execute code directly — you have no such tools
+- NEVER try to read, write, or execute code directly — you have no
+  such tools
 - ALWAYS use dispatch_agent to get work done
-- You can dispatch the same agent multiple times with different tasks
+- You can dispatch the same agent multiple times with different
+  tasks
 - Keep tasks focused — one clear objective per dispatch
-- Match activity to intent: don't force unnecessary exploration when the user
-  just wants a quick fix, and don't rush to implementation when requirements
-  are unclear
-- CRITICAL: NEVER dispatch an archive agent without explicit user approval.
-  Archiving is irreversible — always ask the user after a clean verification.
+- Match activity to intent: don't force unnecessary exploration
+  when the user just wants a quick fix, and don't rush to
+  implementation when requirements are unclear
+- CRITICAL: NEVER dispatch an archive agent without explicit user
+  approval. Archiving is irreversible — always ask the user after
+  a clean verification.
 
 ## Agents
 
@@ -696,17 +819,16 @@ ${agentCatalog}`,
 		widgetCtx = _ctx;
 		contextWindow = _ctx.model?.contextWindow || 0;
 
-		// Wipe old agent session files so subagents start fresh
-		const sessDir = join(_ctx.cwd, ".pi", "spec-sessions");
-		if (existsSync(sessDir)) {
-			for (const f of readdirSync(sessDir)) {
+		loadAgents(_ctx.cwd);
+
+		// Wipe session files so subagents start fresh
+		if (existsSync(sessionDir)) {
+			for (const f of readdirSync(sessionDir)) {
 				if (f.endsWith(".json")) {
-					try { unlinkSync(join(sessDir, f)); } catch {}
+					try { unlinkSync(join(sessionDir, f)); } catch {}
 				}
 			}
 		}
-
-		loadAgents(_ctx.cwd);
 
 		// Default to first team — use /specs-team to switch
 		const teamNames = Object.keys(teams);
