@@ -16,7 +16,7 @@
  * Commands:
  *   /specs-team           — switch active team
  *   /specs-list           — list loaded agents
- *   /specs-grid           — (deprecated) compact single-line layout is always active
+ *   /specs-grid           — set grid columns for dashboard widget (1-6, default 3)
  *
  * Usage: pi -e extensions/spec-teams.ts
  */
@@ -177,6 +177,7 @@ export default function (pi: ExtensionAPI) {
 	let widgetCtx: any;
 	let sessionDir = "";
 	let contextWindow = 0;
+	let maxColumns = 3;
 
 	function loadAgents(cwd: string) {
 		// Create session storage dir
@@ -232,10 +233,20 @@ export default function (pi: ExtensionAPI) {
 
 	}
 
-	// ── Compact Single-Line Rendering ────────────
+	// ── Grid Column Computation ──────────────────
 
-	function renderAgentRow(state: AgentState, width: number, theme: any): string {
+	function computeColumns(numAgents: number, width: number, maxCols: number): number {
+		const MIN_CELL = 12;
+		for (let cols = Math.min(maxCols, numAgents); cols >= 1; cols--) {
+			const cellWidth = Math.floor((width - (cols - 1)) / cols);
+			if (cellWidth >= MIN_CELL) return cols;
+		}
+		return 1;
+	}
 
+	// ── Compact Grid Cell Rendering ──────────────
+
+	function renderAgentCell(state: AgentState, cellWidth: number, theme: any): string {
 		const statusColor = state.status === "idle" ? "dim"
 			: state.status === "running" ? "accent"
 			: state.status === "done" ? "success" : "error";
@@ -244,60 +255,30 @@ export default function (pi: ExtensionAPI) {
 			: state.status === "done" ? "✓" : "✗";
 
 		const iconStr = theme.fg(statusColor, statusIcon);
+		const pctStr = `${Math.ceil(state.contextPct)}%`;
+		const pctLen = pctStr.length;
+		const name = displayName(state.def.name);
 
-		// Context bar: 5 blocks + percent
-		const filled = Math.ceil(state.contextPct / 20);
-		const bar = "#".repeat(filled) + "-".repeat(5 - filled);
-		const ctxStr = `[${bar}] ${Math.ceil(state.contextPct)}%`;
-		const ctxLen = ctxStr.length;  // always 11
+		// name budget: cellWidth - icon(1) - space(1) - space(1) - pctLen
+		const nameBudget = cellWidth - 1 - 1 - 1 - pctLen;
 
-		const workRaw = state.task
-			? (state.lastWork || state.task)
-			: state.def.description;
-
-		// Fixed overhead: icon(1) + space(1) + name padding(2) + ctxBar(11) + desc padding(2) = 17
-		const OVERHEAD = 17;
-		const nameCap = Math.floor(width * 0.3);
-		let remaining = width - OVERHEAD;
-
-		// Handle extremely narrow terminals
-		if (remaining <= 0) {
-			// Bare minimum: just icon + short name + bare percent
-			const bareName = truncateToWidth(displayName(state.def.name), Math.max(3, width - 6));
-			const pctStr = `${Math.ceil(state.contextPct)}%`;
-			let result = iconStr + " " + theme.fg("accent", theme.bold(bareName)) + " " + theme.fg("dim", pctStr);
-			if (visibleWidth(result) > width) {
-				result = truncateToWidth(result, width);
-			}
-			return result;
+		let result: string;
+		if (nameBudget < 1) {
+			// Narrow cell: drop percentage, just icon + truncated name
+			result = iconStr + " " + truncateToWidth(name, Math.max(1, cellWidth - 2));
+		} else {
+			const truncatedName = truncateToWidth(name, nameBudget);
+			result = iconStr + " " + truncatedName + " " + pctStr;
 		}
 
-		let name = displayName(state.def.name);
-		let desc = workRaw || "";
-
-		// Step 1: give name full space (capped at 30% width), allocate rest to description
-		let nameBudget = Math.min(name.length, nameCap);
-		let descBudget = remaining - nameBudget;
-
-		// Step 2: if description doesn't fit, truncate it down to minimum of 1 char
-		const MIN_DESC = 1;
-		if (descBudget < MIN_DESC) {
-			// Not enough room even for name + min desc — truncate name
-			descBudget = MIN_DESC;
-			nameBudget = remaining - MIN_DESC;
+		// Post-render safety guard: re-truncate if visible width exceeds target
+		if (visibleWidth(result) > cellWidth) {
+			result = truncateToWidth(result, cellWidth);
 		}
 
-		name = truncateToWidth(name, Math.max(2, nameBudget));
-		desc = truncateToWidth(desc, Math.max(1, descBudget));
+		// Pad to exact cellWidth
+		result = truncateToWidth(result, cellWidth, "", true);
 
-		const nameStr = theme.fg("accent", theme.bold(name));
-		const ctxLine = theme.fg("dim", ctxStr);
-		const descStr = desc ? theme.fg("muted", desc) : "";
-
-		let result = `${iconStr} ${nameStr}  ${ctxLine}  ${descStr}`;
-		if (visibleWidth(result) > width) {
-			result = truncateToWidth(result, width);
-		}
 		return result;
 	}
 
@@ -311,7 +292,22 @@ export default function (pi: ExtensionAPI) {
 						return [theme.fg("dim", "No agents found. Add .md files to agents/")];
 					}
 					const agents = Array.from(agentStates.values());
-					return agents.map(s => renderAgentRow(s, width, theme));
+					const cols = computeColumns(agentStates.size, width, maxColumns);
+
+					if (cols === 1) {
+						return agents.map(s => renderAgentCell(s, width, theme));
+					}
+
+					const cellWidth = Math.floor((width - (cols - 1)) / cols);
+					const lines: string[] = [];
+
+					for (let i = 0; i < agents.length; i += cols) {
+						const row = agents.slice(i, i + cols);
+						const cells = row.map(s => renderAgentCell(s, cellWidth, theme));
+						lines.push(cells.join("│"));
+					}
+
+					return lines;
 				},
 				invalidate() {},
 			};
@@ -702,8 +698,27 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("specs-grid", {
 		description: "Set grid columns: /specs-grid <1-6>",
 		handler: async (_args, _ctx) => {
+			const arg = _args.trim();
+			if (!arg) {
+				_ctx.ui.notify(
+					`Grid columns: ${maxColumns} (default 3). Usage: /specs-grid <1-6>`,
+					"info",
+				);
+				return;
+			}
+			const num = parseInt(arg, 10);
+			if (isNaN(num) || num < 1 || num > 6) {
+				_ctx.ui.notify(
+					`Invalid column count "${arg}". Valid range: 1-6.`,
+					"warning",
+				);
+				return;
+			}
+			maxColumns = num;
+			widgetCtx = _ctx;
+			updateWidget();
 			_ctx.ui.notify(
-				"The compact single-line layout is always active. Column configuration is not needed.",
+				`Grid columns set to ${maxColumns}.`,
 				"info",
 			);
 		},
@@ -933,7 +948,7 @@ ${agentCatalog}`,
 			`Team sets loaded from: .pi/agents/teams.yaml\n\n` +
 			`/specs-team          Select a team\n` +
 			`/specs-list          List active agents and status\n` +
-			`/specs-grid <1-6>    (deprecated) grid replaced by compact layout`,
+			`/specs-grid <1-6>    Set grid columns (1-6, default 3)`,
 			"info",
 		);
 		updateWidget();
