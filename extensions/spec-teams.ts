@@ -87,6 +87,24 @@ function parseTeamsYaml(raw: string): Record<string, string[]> {
 	return teams;
 }
 
+// ── Duration Formatting Helper ─────────────────
+
+function formatDuration(ms: number): string {
+	if (ms < 1000) return "0s";
+	const totalSecs = Math.floor(ms / 1000);
+	const hours = Math.floor(totalSecs / 3600);
+	const mins = Math.floor((totalSecs % 3600) / 60);
+	const secs = totalSecs % 60;
+
+	if (hours > 0) {
+		return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+	}
+	if (mins > 0) {
+		return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+	}
+	return `${secs}s`;
+}
+
 // ── Frontmatter Parser ───────────────────────────
 
 function parseAgentFile(filePath: string): AgentDef | null {
@@ -306,6 +324,7 @@ export default function (pi: ExtensionAPI) {
 		agentName: string,
 		task: string,
 		ctx: any,
+		onUpdate?: (update: any) => void,
 	): Promise<{ output: string; exitCode: number; elapsed: number }> {
 		const key = agentName.toLowerCase();
 		const state = agentStates.get(key);
@@ -367,6 +386,29 @@ export default function (pi: ExtensionAPI) {
 		args.push(task);
 
 		const textChunks: string[] = [];
+		const thinkingChunks: string[] = [];
+
+		// Throttled update helper — pushes live streaming state to onUpdate at most every 250ms
+		let lastPush = 0;
+		const pushUpdate = () => {
+			if (!onUpdate) return;
+			const now = Date.now();
+			if (now - lastPush < 250) return;
+			lastPush = now;
+			onUpdate({
+				content: [{ type: "text", text: `Dispatching to ${agentName}...` }],
+				details: {
+					agent: agentName,
+					task,
+					status: "dispatching",
+					elapsed: state.elapsed,
+					outputText: textChunks.join(""),
+					thinkingText: thinkingChunks.join(""),
+					toolCount: state.toolCount,
+					contextPct: state.contextPct,
+				},
+			});
+		};
 
 		return new Promise((resolve) => {
 			const proc = spawn("pi", args, {
@@ -393,15 +435,21 @@ export default function (pi: ExtensionAPI) {
 								const last = full.split("\n").filter((l: string) => l.trim()).pop() || "";
 								state.lastWork = last;
 								updateWidget();
+								pushUpdate();
+							} else if (delta?.type === "thinking_delta") {
+								thinkingChunks.push(delta.delta || "");
+								pushUpdate();
 							}
 						} else if (event.type === "tool_execution_start") {
 							state.toolCount++;
 							updateWidget();
+							pushUpdate();
 						} else if (event.type === "message_end") {
 							const msg = event.message;
 							if (msg?.usage && contextWindow > 0) {
 								state.contextPct = ((msg.usage.input || 0) / contextWindow) * 100;
 								updateWidget();
+								pushUpdate();
 							}
 						} else if (event.type === "agent_end") {
 							const msgs = event.messages || [];
@@ -409,6 +457,7 @@ export default function (pi: ExtensionAPI) {
 							if (last?.usage && contextWindow > 0) {
 								state.contextPct = ((last.usage.input || 0) / contextWindow) * 100;
 								updateWidget();
+								pushUpdate();
 							}
 						}
 					} catch {}
@@ -443,7 +492,7 @@ export default function (pi: ExtensionAPI) {
 				updateWidget();
 
 				ctx.ui.notify(
-					`${displayName(state.def.name)} ${state.status} in ${Math.round(state.elapsed / 1000)}s`,
+					`${displayName(state.def.name)} ${state.status} in ${formatDuration(state.elapsed)}`,
 					state.status === "done" ? "success" : "error"
 				);
 
@@ -490,7 +539,7 @@ export default function (pi: ExtensionAPI) {
 					});
 				}
 
-				const result = await dispatchAgent(agent, task, ctx);
+				const result = await dispatchAgent(agent, task, ctx, onUpdate);
 
 				// TODO: Revisit truncation strategy. Preserving the tail (where the status
 				// signal block lives) is critical for the relay protocol. For now, pass the
@@ -501,7 +550,7 @@ export default function (pi: ExtensionAPI) {
 				const truncated = result.output;
 
 				const status = result.exitCode === 0 ? "done" : "error";
-				const summary = `[${agent}] ${status} in ${Math.round(result.elapsed / 1000)}s`;
+				const summary = `[${agent}] ${status} in ${formatDuration(result.elapsed)}`;
 
 				return {
 					content: [{ type: "text", text: `${summary}\n\n${truncated}` }],
@@ -544,27 +593,66 @@ export default function (pi: ExtensionAPI) {
 
 			// Streaming/partial result while agent is still running
 			if (options.isPartial || details.status === "dispatching") {
-				return new Text(
-					theme.fg("accent", `● ${details.agent || "?"}`) +
-					theme.fg("dim", " working..."),
-					0, 0,
-				);
+				const dur = typeof details.elapsed === "number" ? formatDuration(details.elapsed) : "0s";
+				const header = theme.fg("accent", `● ${details.agent || "?"}`) +
+					theme.fg("dim", ` ${dur}`);
+
+				const parts: string[] = [header];
+
+				// Show the full task/prompt
+				if (details.task) {
+					parts.push("");
+					parts.push(theme.fg("dim", details.task));
+				}
+
+				// Show full streaming text output
+				if (details.outputText) {
+					parts.push("");
+					parts.push(details.outputText);
+				}
+
+				// Show full thinking output (dimmed to distinguish from text)
+				if (details.thinkingText) {
+					parts.push("");
+					parts.push(theme.fg("dim", details.thinkingText));
+				}
+
+				// Status line: tool count and context usage
+				const tc = typeof details.toolCount === "number" ? details.toolCount : 0;
+				const pct = typeof details.contextPct === "number" ? Math.round(details.contextPct) : 0;
+				const statusLine = `🔧 ${tc} calls | ctx ${pct}%`;
+				parts.push("");
+				parts.push(theme.fg("dim", statusLine));
+
+				return new Text(parts.join("\n"), 0, 0);
 			}
 
 			const icon = details.status === "done" ? "✓" : "✗";
 			const color = details.status === "done" ? "success" : "error";
-			const elapsed = typeof details.elapsed === "number" ? Math.round(details.elapsed / 1000) : 0;
+			const dur = typeof details.elapsed === "number" ? formatDuration(details.elapsed) : "0s";
 			const header = theme.fg(color, `${icon} ${details.agent}`) +
-				theme.fg("dim", ` ${elapsed}s`);
+				theme.fg("dim", ` ${dur}`);
 
-			if (options.expanded && details.fullOutput) {
-				const output = details.fullOutput.length > 4000
-					? details.fullOutput.slice(0, 4000) + "\n... [truncated]"
-					: details.fullOutput;
-				return new Text(header + "\n" + theme.fg("muted", output), 0, 0);
+			const parts: string[] = [header];
+
+			// Show the input task (skip if empty/undefined)
+			if (details.task) {
+				parts.push("");
+				parts.push(theme.fg("dim", details.task));
 			}
 
-			return new Text(header, 0, 0);
+			// Show the final output (skip if empty/undefined)
+			if (details.fullOutput) {
+				const output = options.expanded
+					? details.fullOutput
+					: (details.fullOutput.length > 4000
+						? details.fullOutput.slice(0, 4000) + "\n... [truncated]"
+						: details.fullOutput);
+				parts.push("");
+				parts.push(theme.fg("muted", output));
+			}
+
+			return new Text(parts.join("\n"), 0, 0);
 		},
 	});
 
