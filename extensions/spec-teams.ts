@@ -21,9 +21,9 @@
  * Usage: pi -e extensions/spec-teams.ts
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Text, truncateToWidth, visibleWidth, Container, Markdown, Spacer } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
 import { readdirSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
 import { join, resolve } from "path";
@@ -38,6 +38,7 @@ interface AgentDef {
 	systemPrompt: string;
 	file: string;
 	thinking?: boolean;
+	model?: string;
 }
 
 interface AgentState {
@@ -51,6 +52,9 @@ interface AgentState {
 	sessionFile: string | null;
 	runCount: number;
 	timer?: ReturnType<typeof setInterval>;
+	inputTokens: number;
+	outputTokens: number;
+	cost: number;
 }
 
 // ── Display Name Helper ──────────────────────────
@@ -105,6 +109,47 @@ function formatDuration(ms: number): string {
 	return `${secs}s`;
 }
 
+// ── Token Formatting Helper ──────────────────────
+
+function formatTokens(count: number): string {
+	if (count < 1000) return count.toString();
+	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+	if (count < 1000000) return `${Math.round(count / 1000)}k`;
+	return `${(count / 1000000).toFixed(1)}M`;
+}
+
+// ── Status Signal Detection ──────────────────────
+
+function detectStatusSignal(text: string): { signal: string; line: string } | null {
+	const match = text.match(/^Status:\s+(need-input|ready-to-propose|blocked|done-exploring)$/m);
+	if (!match) return null;
+	return { signal: match[1], line: match[0] };
+}
+
+// ── Metrics Footer Formatting ────────────────────
+
+function formatMetricsFooter(details: any): string {
+	const parts: string[] = [];
+	// Tool count
+	const tc = typeof details.toolCount === "number" ? details.toolCount : 0;
+	parts.push(`🔧 ${tc} call${tc !== 1 ? "s" : ""}`);
+	// Input tokens
+	if (typeof details.inputTokens === "number" && details.inputTokens > 0) {
+		parts.push(`↑${formatTokens(details.inputTokens)}`);
+	}
+	// Output tokens
+	if (typeof details.outputTokens === "number" && details.outputTokens > 0) {
+		parts.push(`↓${formatTokens(details.outputTokens)}`);
+	}
+	// Cost — always show, even if 0
+	const cost = typeof details.cost === "number" ? details.cost : 0;
+	parts.push(cost === 0 ? "$0" : `$${cost.toFixed(4)}`);
+	// Context %
+	const pct = typeof details.contextPct === "number" ? Math.round(details.contextPct) : 0;
+	parts.push(`ctx ${pct}%`);
+	return parts.join("  ");
+}
+
 // ── Frontmatter Parser ───────────────────────────
 
 function parseAgentFile(filePath: string): AgentDef | null {
@@ -125,6 +170,7 @@ function parseAgentFile(filePath: string): AgentDef | null {
 
 		const thinkingRaw = (frontmatter.thinking || "").toLowerCase().trim();
 		const thinking = thinkingRaw === "on";
+		const model = frontmatter.model || undefined;
 
 		return {
 			name: frontmatter.name,
@@ -133,6 +179,7 @@ function parseAgentFile(filePath: string): AgentDef | null {
 			systemPrompt: match[2].trim(),
 			file: filePath,
 			thinking,
+			model,
 		};
 	} catch {
 		return null;
@@ -228,6 +275,9 @@ export default function (pi: ExtensionAPI) {
 				contextPct: 0,
 				sessionFile: existsSync(sessionFile) ? sessionFile : null,
 				runCount: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				cost: 0,
 			});
 		}
 
@@ -321,7 +371,7 @@ export default function (pi: ExtensionAPI) {
 		task: string,
 		ctx: any,
 		onUpdate?: (update: any) => void,
-	): Promise<{ output: string; exitCode: number; elapsed: number }> {
+	): Promise<{ output: string; exitCode: number; elapsed: number; inputTokens: number; outputTokens: number; cost: number; toolCount: number; contextPct: number; thinkingText: string }> {
 		const key = agentName.toLowerCase();
 		const state = agentStates.get(key);
 		if (!state) {
@@ -329,6 +379,12 @@ export default function (pi: ExtensionAPI) {
 				output: `Agent "${agentName}" not found. Available: ${Array.from(agentStates.values()).map(s => displayName(s.def.name)).join(", ")}`,
 				exitCode: 1,
 				elapsed: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				cost: 0,
+				toolCount: 0,
+				contextPct: 0,
+				thinkingText: "",
 			});
 		}
 
@@ -337,6 +393,12 @@ export default function (pi: ExtensionAPI) {
 				output: `Agent "${displayName(state.def.name)}" is already running. Wait for it to finish.`,
 				exitCode: 1,
 				elapsed: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				cost: 0,
+				toolCount: 0,
+				contextPct: 0,
+				thinkingText: "",
 			});
 		}
 
@@ -346,6 +408,9 @@ export default function (pi: ExtensionAPI) {
 		state.elapsed = 0;
 		state.lastWork = "";
 		state.runCount++;
+		state.inputTokens = 0;
+		state.outputTokens = 0;
+		state.cost = 0;
 		updateWidget();
 
 		const startTime = Date.now();
@@ -402,6 +467,9 @@ export default function (pi: ExtensionAPI) {
 					thinkingText: thinkingChunks.join(""),
 					toolCount: state.toolCount,
 					contextPct: state.contextPct,
+					inputTokens: state.inputTokens,
+					outputTokens: state.outputTokens,
+					cost: state.cost,
 				},
 			});
 		};
@@ -442,19 +510,29 @@ export default function (pi: ExtensionAPI) {
 							pushUpdate();
 						} else if (event.type === "message_end") {
 							const msg = event.message;
-							if (msg?.usage && contextWindow > 0) {
-								state.contextPct = ((msg.usage.input || 0) / contextWindow) * 100;
-								updateWidget();
-								pushUpdate();
+							if (msg?.usage) {
+								if (contextWindow > 0) {
+									state.contextPct = ((msg.usage.input || 0) / contextWindow) * 100;
+								}
+								state.inputTokens += msg.usage.input || 0;
+								state.outputTokens += msg.usage.output || 0;
+								state.cost += msg.usage.cost?.total || 0;
 							}
+							updateWidget();
+							pushUpdate();
 						} else if (event.type === "agent_end") {
 							const msgs = event.messages || [];
 							const last = [...msgs].reverse().find((m: any) => m.role === "assistant");
-							if (last?.usage && contextWindow > 0) {
-								state.contextPct = ((last.usage.input || 0) / contextWindow) * 100;
-								updateWidget();
-								pushUpdate();
+							if (last?.usage) {
+								if (contextWindow > 0) {
+									state.contextPct = ((last.usage.input || 0) / contextWindow) * 100;
+								}
+								state.inputTokens += last.usage.input || 0;
+								state.outputTokens += last.usage.output || 0;
+								state.cost += last.usage.cost?.total || 0;
 							}
+							updateWidget();
+							pushUpdate();
 						}
 					} catch {}
 				}
@@ -496,6 +574,12 @@ export default function (pi: ExtensionAPI) {
 					output: full,
 					exitCode: code ?? 1,
 					elapsed: state.elapsed,
+					inputTokens: state.inputTokens,
+					outputTokens: state.outputTokens,
+					cost: state.cost,
+					toolCount: state.toolCount,
+					contextPct: state.contextPct,
+					thinkingText: thinkingChunks.join(""),
 				});
 			});
 
@@ -508,12 +592,38 @@ export default function (pi: ExtensionAPI) {
 					output: `Error spawning agent: ${err.message}`,
 					exitCode: 1,
 					elapsed: Date.now() - startTime,
+					inputTokens: state.inputTokens,
+					outputTokens: state.outputTokens,
+					cost: state.cost,
+					toolCount: state.toolCount,
+					contextPct: state.contextPct,
+					thinkingText: thinkingChunks.join(""),
 				});
 			});
 		});
 	}
 
 	// ── dispatch_agent Tool (registered at top level) ──
+
+	// Helper: split output text around signal lines, returning segments for Container children
+	function splitOutputWithSignals(text: string): { type: "text" | "signal"; content: string; signalName?: string }[] {
+		const pattern = /^(Status:\s+(need-input|ready-to-propose|blocked|done-exploring))$/gm;
+		const segments: { type: "text" | "signal"; content: string; signalName?: string }[] = [];
+		let lastIndex = 0;
+		let match: RegExpExecArray | null;
+
+		while ((match = pattern.exec(text)) !== null) {
+			if (match.index > lastIndex) {
+				segments.push({ type: "text", content: text.slice(lastIndex, match.index) });
+			}
+			segments.push({ type: "signal", content: match[1], signalName: match[2] });
+			lastIndex = match.index + match[0].length;
+		}
+		if (lastIndex < text.length) {
+			segments.push({ type: "text", content: text.slice(lastIndex) });
+		}
+		return segments;
+	}
 
 	pi.registerTool({
 		name: "dispatch_agent",
@@ -557,12 +667,18 @@ export default function (pi: ExtensionAPI) {
 						elapsed: result.elapsed,
 						exitCode: result.exitCode,
 						fullOutput: result.output,
+						inputTokens: result.inputTokens,
+						outputTokens: result.outputTokens,
+						cost: result.cost,
+						toolCount: result.toolCount,
+						contextPct: result.contextPct,
+						thinkingText: result.thinkingText,
 					},
 				};
 			} catch (err: any) {
 				return {
 					content: [{ type: "text", text: `Error dispatching to ${agent}: ${err?.message || err}` }],
-					details: { agent, task, status: "error", elapsed: 0, exitCode: 1, fullOutput: "" },
+					details: { agent, task, status: "error", elapsed: 0, exitCode: 1, fullOutput: "", inputTokens: 0, outputTokens: 0, cost: 0, toolCount: 0, contextPct: 0, thinkingText: "" },
 				};
 			}
 		},
@@ -571,9 +687,13 @@ export default function (pi: ExtensionAPI) {
 			const agentName = (args as any).agent || "?";
 			const task = (args as any).task || "";
 			const preview = task.length > 60 ? task.slice(0, 57) + "..." : task;
+			// Look up agent definition for model info
+			const agentDef = allAgentDefs.find(d => d.name.toLowerCase() === agentName.toLowerCase());
+			const modelPart = agentDef?.model ? ` (${agentDef.model})` : "";
 			return new Text(
 				theme.fg("toolTitle", theme.bold("dispatch_agent ")) +
 				theme.fg("accent", agentName) +
+				theme.fg("dim", modelPart) +
 				theme.fg("dim", " — ") +
 				theme.fg("muted", preview),
 				0, 0,
@@ -587,68 +707,147 @@ export default function (pi: ExtensionAPI) {
 				return new Text(text?.type === "text" ? text.text : "", 0, 0);
 			}
 
-			// Streaming/partial result while agent is still running
-			if (options.isPartial || details.status === "dispatching") {
+			const isPartial = options.isPartial || details.status === "dispatching";
+			const mdTheme = getMarkdownTheme();
+
+			// ── Helper: build a signal-highlighted Text component for a signal line ──
+			const renderSignalLine = (signalName: string, line: string) => {
+				const color =
+					signalName === "need-input" ? "warning" :
+					signalName === "blocked" ? "error" : "success";
+				return new Text(theme.fg(color, theme.bold(line)), 0, 0);
+			};
+
+			// ── Streaming/partial result while agent is still running ──
+			if (isPartial) {
+				const container = new Container();
 				const dur = typeof details.elapsed === "number" ? formatDuration(details.elapsed) : "0s";
-				const header = theme.fg("accent", `● ${details.agent || "?"}`) +
-					theme.fg("dim", ` ${dur}`);
 
-				const parts: string[] = [header];
+				// Header: agent icon, name, elapsed
+				container.addChild(new Text(
+					theme.fg("accent", `● ${details.agent || "?"}`) +
+					theme.fg("dim", ` ${dur}`),
+					0, 0,
+				));
 
-				// Show the full task/prompt
+				// Task section (only if task present)
 				if (details.task) {
-					parts.push("");
-					parts.push(theme.fg("dim", details.task));
+					container.addChild(new Spacer(1));
+					container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
+					container.addChild(new Text(theme.fg("dim", details.task), 0, 0));
 				}
 
-				// Show full streaming text output
+				// Output section — render as Text (not Markdown) during streaming
 				if (details.outputText) {
-					parts.push("");
-					parts.push(details.outputText);
+					container.addChild(new Spacer(1));
+					container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
+
+					// Scan for signals in streaming output
+					const signal = detectStatusSignal(details.outputText);
+					if (signal) {
+						// Split around signal for highlighting
+						const segments = splitOutputWithSignals(details.outputText);
+						for (const seg of segments) {
+							if (seg.type === "signal") {
+								container.addChild(renderSignalLine(seg.signalName!, seg.content));
+							} else if (seg.content.trim()) {
+								container.addChild(new Text(seg.content, 0, 0));
+							}
+						}
+					} else {
+						container.addChild(new Text(details.outputText, 0, 0));
+					}
 				}
 
-				// Show full thinking output (dimmed to distinguish from text)
+				// Thinking section — always collapsed hint during streaming
 				if (details.thinkingText) {
-					parts.push("");
-					parts.push(theme.fg("dim", details.thinkingText));
+					const thinkingLines = details.thinkingText.split("\n").length;
+					container.addChild(new Spacer(1));
+					container.addChild(new Text(theme.fg("muted", "─── Thinking ───"), 0, 0));
+					container.addChild(new Text(
+						theme.fg("dim", `▶ ${thinkingLines} line${thinkingLines !== 1 ? "s" : ""} — Ctrl+O to expand`),
+						0, 0,
+					));
 				}
 
-				// Status line: tool count and context usage
-				const tc = typeof details.toolCount === "number" ? details.toolCount : 0;
-				const pct = typeof details.contextPct === "number" ? Math.round(details.contextPct) : 0;
-				const statusLine = `🔧 ${tc} calls | ctx ${pct}%`;
-				parts.push("");
-				parts.push(theme.fg("dim", statusLine));
+				// Metrics footer for streaming
+				container.addChild(new Spacer(1));
+				container.addChild(new Text(theme.fg("dim", formatMetricsFooter(details)), 0, 0));
 
-				return new Text(parts.join("\n"), 0, 0);
+				return container;
 			}
 
+			// ── Final result (done or error) ──
+			const container = new Container();
 			const icon = details.status === "done" ? "✓" : "✗";
 			const color = details.status === "done" ? "success" : "error";
 			const dur = typeof details.elapsed === "number" ? formatDuration(details.elapsed) : "0s";
-			const header = theme.fg(color, `${icon} ${details.agent}`) +
-				theme.fg("dim", ` ${dur}`);
 
-			const parts: string[] = [header];
+			// Header: status icon, agent name, elapsed time
+			container.addChild(new Text(
+				theme.fg(color, `${icon} ${details.agent || "?"}`) +
+				theme.fg("dim", ` ${dur}`),
+				0, 0,
+			));
 
-			// Show the input task (skip if empty/undefined)
+			// Task section (only if task present)
 			if (details.task) {
-				parts.push("");
-				parts.push(theme.fg("dim", details.task));
+				container.addChild(new Spacer(1));
+				container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
+				container.addChild(new Text(theme.fg("dim", details.task), 0, 0));
 			}
 
-			// Show the final output (skip if empty/undefined)
+			// Output section
 			if (details.fullOutput) {
+				container.addChild(new Spacer(1));
+				container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
+
 				const output = options.expanded
 					? details.fullOutput
 					: (details.fullOutput.length > 4000
 						? details.fullOutput.slice(0, 4000) + "\n... [truncated]"
 						: details.fullOutput);
-				parts.push("");
-				parts.push(theme.fg("muted", output));
+
+				// Scan for signals in output
+				const signal = detectStatusSignal(output);
+				if (signal) {
+					// Split around signal lines and render each segment
+					const segments = splitOutputWithSignals(output);
+					for (const seg of segments) {
+						if (seg.type === "signal") {
+							container.addChild(renderSignalLine(seg.signalName!, seg.content));
+						} else if (seg.content.trim()) {
+							container.addChild(new Markdown(seg.content, 0, 0, mdTheme));
+						}
+					}
+				} else {
+					container.addChild(new Markdown(output, 0, 0, mdTheme));
+				}
 			}
 
-			return new Text(parts.join("\n"), 0, 0);
+			// Thinking section
+			if (details.thinkingText) {
+				const thinkingLines = details.thinkingText.split("\n").length;
+				container.addChild(new Spacer(1));
+				container.addChild(new Text(theme.fg("muted", "─── Thinking ───"), 0, 0));
+
+				if (options.expanded) {
+					// Full thinking text when expanded
+					container.addChild(new Text(theme.fg("dim", details.thinkingText), 0, 0));
+				} else {
+					// Collapsed hint
+					container.addChild(new Text(
+						theme.fg("dim", `▶ ${thinkingLines} line${thinkingLines !== 1 ? "s" : ""} — Ctrl+O to expand`),
+						0, 0,
+					));
+				}
+			}
+
+			// Metrics footer
+			container.addChild(new Spacer(1));
+			container.addChild(new Text(theme.fg("dim", formatMetricsFooter(details)), 0, 0));
+
+			return container;
 		},
 	});
 
