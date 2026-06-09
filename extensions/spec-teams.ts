@@ -1187,24 +1187,71 @@ ${agentCatalog}`,
 		);
 		updateWidget();
 
-		// Footer: model | team | context bar
+		// Footer: aggregate metrics + team name (single-line)
 		_ctx.ui.setFooter((_tui, theme, _footerData) => ({
 			dispose: () => {},
 			invalidate() {},
 			render(width: number): string[] {
-				const model = _ctx.model?.id || "no-model";
-				const usage = _ctx.getContextUsage();
-				const pct = usage ? usage.percent : 0;
-				const filled = Math.round(pct / 10);
-				const bar = "#".repeat(filled) + "-".repeat(10 - filled);
+				// ── Dispatcher session totals (task 1.1) ──
+				let dispatcherInput = 0;
+				let dispatcherOutput = 0;
+				let dispatcherCost = 0;
+				let dispatcherToolCalls = 0;
 
-				const left = theme.fg("dim", ` ${model}`) +
-					theme.fg("muted", " · ") +
-					theme.fg("accent", activeTeamName);
-				const right = theme.fg("dim", `[${bar}] ${Math.round(pct)}% `);
-				const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
+				const branch = _ctx.sessionManager?.getBranch();
+				if (branch) {
+					for (const entry of branch) {
+						// Assistant messages → sum token/cost usage (task 1.2)
+						if (entry.type === "message" && entry.message?.role === "assistant") {
+							const u = (entry.message as any).usage;
+							if (u) {
+								dispatcherInput += u.input || 0;
+								dispatcherOutput += u.output || 0;
+								dispatcherCost += u.cost?.total || 0;
+							}
+						// dispatch_agent tool calls
+						} else if (entry.type === "tool" && entry.tool?.name === "dispatch_agent") {
+							dispatcherToolCalls++;
+						}
+					}
+				}
 
-				return [truncateToWidth(left + pad + right, width)];
+				// ── Subagent totals from agentStates Map (task 2.1) ──
+				let subagentInput = 0;
+				let subagentOutput = 0;
+				let subagentCost = 0;
+				let subagentToolCalls = 0;
+
+				for (const state of agentStates.values()) {
+					subagentInput += state.inputTokens || 0;
+					subagentOutput += state.outputTokens || 0;
+					subagentCost += state.cost || 0;
+					subagentToolCalls += state.toolCount || 0;
+				}
+
+				// ── Combined totals (tasks 2.2, 2.3) ──
+				const combinedInput = dispatcherInput + subagentInput;
+				const combinedOutput = dispatcherOutput + subagentOutput;
+				const combinedCost = dispatcherCost + subagentCost;
+				const combinedToolCalls = dispatcherToolCalls + subagentToolCalls;
+
+				// ── Build details object (task 3.1) ──
+				const contextPct = _ctx.getContextUsage()?.percent;
+				const modelId = _ctx.model?.id;
+				const details = {
+					toolCount: combinedToolCalls,
+					inputTokens: combinedInput,
+					outputTokens: combinedOutput,
+					cost: combinedCost,
+					contextPct,
+					model: modelId,
+				};
+
+				// ── Single line: metrics + team name (tasks 3.2, 3.3, 3.4) ──
+				const metrics = formatMetricsFooter(details);
+				const line = truncateToWidth(`${metrics} · ${activeTeamName}`, width);
+
+				return [line];
 			},
 		}));
 	});
