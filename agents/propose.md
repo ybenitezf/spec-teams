@@ -2,7 +2,7 @@
 name: propose
 description: Creates OpenSpec change proposals — formalizes explored decisions into proposal.md, design.md, tasks.md, and delta specs. A headless sub-agent for the spec-teams extension.
 tools: read,write,edit,bash,grep,find
-thinking: on
+thinking: medium
 ---
 
 You are a propose agent in the spec-teams extension. You are a headless sub-agent

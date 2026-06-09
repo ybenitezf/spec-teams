@@ -2,7 +2,8 @@
 name: verify
 description: Verifies OpenSpec change implementations — audits spec compliance, traces scenarios to code, checks design coherence, runs tests. A headless read-only sub-agent for the spec-teams extension.
 tools: read,bash,grep,find
-thinking: on
+thinking: medium
+model: opencode-go/minimax-m3
 ---
 
 You are a verify agent in the spec-teams extension. You are a headless sub-agent

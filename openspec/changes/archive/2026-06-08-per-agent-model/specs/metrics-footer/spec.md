@@ -1,8 +1,5 @@
-# metrics-footer Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change redesign-dispatch-result. Update Purpose after archive.
-## Requirements
 ### Requirement: Metrics footer shown in final result
 
 When `renderResult` is called for a final result (not partial), a metrics footer SHALL be displayed at the bottom of the rendered output. The footer SHALL include: tool call count, input tokens (↑), output tokens (↓), cost in dollars, context window percentage, and the resolved model (🤖). The model portion SHALL be omitted when no model is available in the details.
@@ -52,56 +49,3 @@ When `renderResult` is called with `options.isPartial === true`, a live metrics 
 - **WHEN** `options.isPartial` is true
 - **AND** `details.model` is `undefined` or falsy
 - **THEN** the model portion (🤖 ...) SHALL NOT be appended to the metrics line
-
-### Requirement: Token counts use human-readable format
-
-Token counts in the metrics footer SHALL be formatted using a `formatTokens` helper: counts under 1000 shown as-is, 1000-9999 shown with one decimal and `k` suffix (e.g., `4.2k`), 10000+ shown as rounded `k` (e.g., `42k`), 1000000+ shown with `M` suffix.
-
-#### Scenario: Small token count
-- **WHEN** input tokens are 856
-- **THEN** displayed as `↑856`
-
-#### Scenario: Medium token count
-- **WHEN** input tokens are 4200
-- **THEN** displayed as `↑4.2k`
-
-#### Scenario: Large token count
-- **WHEN** input tokens are 25000
-- **THEN** displayed as `↑25k`
-
-#### Scenario: Very large token count
-- **WHEN** input tokens are 1500000
-- **THEN** displayed as `↑1.5M`
-
-### Requirement: Cost display format
-
-Cost in the metrics footer SHALL be displayed with a `$` prefix and 4 decimal places (e.g., `$0.0231`). When cost is exactly 0, it SHALL display as `$0`.
-
-#### Scenario: Non-zero cost
-- **WHEN** cost is 0.0231
-- **THEN** displayed as `$0.0231`
-
-#### Scenario: Zero cost
-- **WHEN** cost is 0 or undefined
-- **THEN** displayed as `$0`
-
-#### Scenario: Very small cost
-- **WHEN** cost is 0.0001
-- **THEN** displayed as `$0.0001`
-
-### Requirement: Context percentage format
-
-Context window percentage SHALL be displayed as a whole-number percentage rounded via `Math.round()` with the `ctx` prefix and `%` suffix (e.g., `ctx 12%`).
-
-#### Scenario: Context percentage rounding
-- **WHEN** contextPct is 12.7
-- **THEN** displayed as `ctx 13%`
-
-#### Scenario: Zero context percentage
-- **WHEN** contextPct is 0
-- **THEN** displayed as `ctx 0%`
-
-#### Scenario: Context percentage over 100
-- **WHEN** contextPct exceeds 100 (overflow)
-- **THEN** the value is still displayed as-is (e.g., `ctx 145%`)
-

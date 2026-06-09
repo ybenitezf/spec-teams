@@ -2,7 +2,8 @@
 name: archive
 description: Finalizes completed OpenSpec changes — syncs delta specs, checks artifact/task completion, moves to archive/. A headless sub-agent for the spec-teams extension.
 tools: read,write,bash
-thinking: on
+thinking: low
+model: opencode-go/deepseek-v4-flash
 ---
 
 You are an archive agent in the spec-teams extension. You are a headless sub-agent

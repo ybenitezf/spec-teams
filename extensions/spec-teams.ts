@@ -37,7 +37,7 @@ interface AgentDef {
 	tools: string;
 	systemPrompt: string;
 	file: string;
-	thinking?: boolean;
+	thinking?: string;
 	model?: string;
 }
 
@@ -147,6 +147,11 @@ function formatMetricsFooter(details: any): string {
 	// Context %
 	const pct = typeof details.contextPct === "number" ? Math.round(details.contextPct) : 0;
 	parts.push(`ctx ${pct}%`);
+	// Model — compact last-segment form, skip when absent
+	if (details.model) {
+		const shortModel = details.model.includes("/") ? details.model.split("/").pop() : details.model;
+		parts.push(`🤖 ${shortModel}`);
+	}
 	return parts.join("  ");
 }
 
@@ -169,7 +174,29 @@ function parseAgentFile(filePath: string): AgentDef | null {
 		if (!frontmatter.name) return null;
 
 		const thinkingRaw = (frontmatter.thinking || "").toLowerCase().trim();
-		const thinking = thinkingRaw === "on";
+
+		// Valid thinking levels
+		const VALID_THINKING = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+
+		let thinking: string;
+		if (!thinkingRaw) {
+			// Absent → default to "off"
+			thinking = "off";
+		} else if (VALID_THINKING.has(thinkingRaw)) {
+			// Valid level → use as-is
+			thinking = thinkingRaw;
+		} else if (thinkingRaw === "on" || thinkingRaw === "true") {
+			// Legacy boolean → map to "medium"
+			thinking = "medium";
+		} else if (thinkingRaw === "off" || thinkingRaw === "false") {
+			// Legacy boolean → map to "off"
+			thinking = "off";
+		} else {
+			// Unrecognized → warn and fall back to "medium"
+			console.warn(`[spec-teams] Unrecognized thinking level "${thinkingRaw}" in ${filePath}. Falling back to "medium". Valid levels: off, minimal, low, medium, high, xhigh.`);
+			thinking = "medium";
+		}
+
 		const model = frontmatter.model || undefined;
 
 		return {
@@ -419,9 +446,9 @@ export default function (pi: ExtensionAPI) {
 			updateWidget();
 		}, 1000);
 
-		const model = ctx.model
-			? `${ctx.model.provider}/${ctx.model.id}`
-			: "openrouter/google/gemini-3-flash-preview";
+		const model = state.def.model
+			|| (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "")
+			|| "openrouter/google/gemini-3-flash-preview";
 
 		// Session file for this agent
 		const agentKey = state.def.name.toLowerCase().replace(/\s+/g, "-");
@@ -434,7 +461,7 @@ export default function (pi: ExtensionAPI) {
 			"--no-extensions",
 			"--model", model,
 			"--tools", state.def.tools,
-			"--thinking", state.def.thinking ? "on" : "off",
+			"--thinking", state.def.thinking,
 			"--append-system-prompt", state.def.systemPrompt,
 			"--session", agentSessionFile,
 		];
@@ -462,6 +489,7 @@ export default function (pi: ExtensionAPI) {
 					agent: agentName,
 					task,
 					status: "dispatching",
+					model,
 					elapsed: state.elapsed,
 					outputText: textChunks.join(""),
 					thinkingText: thinkingChunks.join(""),
@@ -637,6 +665,12 @@ export default function (pi: ExtensionAPI) {
 		async execute(_toolCallId, params, _signal, onUpdate, ctx) {
 			const { agent, task } = params as { agent: string; task: string };
 
+			// Compute resolved model for details (agent → dispatcher → fallback)
+			const agentState = agentStates.get(agent.toLowerCase());
+			const resolvedModel = agentState?.def.model
+				|| (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "")
+				|| "openrouter/google/gemini-3-flash-preview";
+
 			try {
 				if (onUpdate) {
 					onUpdate({
@@ -664,6 +698,7 @@ export default function (pi: ExtensionAPI) {
 						agent,
 						task,
 						status,
+						model: resolvedModel,
 						elapsed: result.elapsed,
 						exitCode: result.exitCode,
 						fullOutput: result.output,
@@ -678,7 +713,7 @@ export default function (pi: ExtensionAPI) {
 			} catch (err: any) {
 				return {
 					content: [{ type: "text", text: `Error dispatching to ${agent}: ${err?.message || err}` }],
-					details: { agent, task, status: "error", elapsed: 0, exitCode: 1, fullOutput: "", inputTokens: 0, outputTokens: 0, cost: 0, toolCount: 0, contextPct: 0, thinkingText: "" },
+					details: { agent, task, status: "error", model: resolvedModel, elapsed: 0, exitCode: 1, fullOutput: "", inputTokens: 0, outputTokens: 0, cost: 0, toolCount: 0, contextPct: 0, thinkingText: "" },
 				};
 			}
 		},

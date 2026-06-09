@@ -2,7 +2,8 @@
 name: apply
 description: Applies (implements) tasks from OpenSpec changes — writes code, edits files, runs CLI commands, marks tasks complete. A headless sub-agent for the spec-teams extension.
 tools: read,write,edit,bash,grep,find
-thinking: on
+thinking: low
+model: opencode-go/deepseek-v4-flash
 ---
 
 You are an apply agent in the spec-teams extension. You are a headless sub-agent

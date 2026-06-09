@@ -193,40 +193,84 @@ The system prompt SHALL include guidance that matches the dispatcher's activity 
 - **WHEN** the user confirms archive after a clean verification
 - **THEN** the dispatcher SHALL dispatch the archive agent with the change name and instruction to sync
 
+### Requirement: Agent model field controls dispatched model
+
+The `dispatchAgent()` function SHALL use the agent definition's `model` field (parsed from Markdown frontmatter) to set the `--model` flag when spawning the child `pi` process. When `model` is present and truthy, it SHALL take precedence over the dispatcher's model (`ctx.model`). When absent or falsy, resolution SHALL fall through to `ctx.model` and then to the hardcoded fallback.
+
+#### Scenario: Agent with model gets its own model
+- **WHEN** a task is dispatched to an agent with `model: "openrouter/anthropic/claude-sonnet-4"`
+- **THEN** the spawned `pi` process receives `--model openrouter/anthropic/claude-sonnet-4`
+
+#### Scenario: Agent without model uses dispatcher model
+- **WHEN** a task is dispatched to an agent whose definition has no `model` field
+- **AND** the dispatcher has `ctx.model` set
+- **THEN** the spawned `pi` process receives `--model` with the dispatcher's model
+
+#### Scenario: Existing behavior preserved for agents without model field
+- **WHEN** a task is dispatched to an agent whose definition has no `model` field
+- **THEN** behavior is identical to before this change
+- **AND** the change is non-breaking
+
 ### Requirement: Agent Thinking Flag
-The agent definition parser SHALL extract an optional `thinking` field from agent Markdown frontmatter, accepting values `on` or `off`. When absent, the field SHALL default to `off`.
 
-#### Scenario: Thinking flag present and on
+The agent definition parser SHALL extract an optional `thinking` field from agent Markdown frontmatter. Valid values are `off`, `minimal`, `low`, `medium`, `high`, and `xhigh`. Legacy values `on` and `true` SHALL be mapped to `"medium"`. Legacy values `off` and `false` SHALL be mapped to `"off"`. Unrecognized values SHALL produce a console warning and fall back to `"medium"`. When absent, the field SHALL default to `"off"`.
+
+#### Scenario: Valid thinking level accepted
+- **WHEN** an agent `.md` file contains `thinking: high`
+- **THEN** `parseAgentFile()` returns a definition with `thinking: "high"`
+
+#### Scenario: All six levels accepted
+- **WHEN** an agent `.md` file contains any of `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`
+- **THEN** `parseAgentFile()` returns the definition with that exact string value
+
+#### Scenario: Legacy `on` mapped to medium
 - **WHEN** an agent `.md` file contains `thinking: on`
-- **THEN** `parseAgentFile()` returns a definition with `thinking: true`
+- **THEN** `parseAgentFile()` returns a definition with `thinking: "medium"`
 
-#### Scenario: Thinking flag present and off
+#### Scenario: Legacy `off` mapped to off
 - **WHEN** an agent `.md` file contains `thinking: off`
-- **THEN** `parseAgentFile()` returns a definition with `thinking: false`
+- **THEN** `parseAgentFile()` returns a definition with `thinking: "off"`
 
-#### Scenario: Thinking flag absent
-- **WHEN** an agent `.md` file does NOT contain a `thinking` field
-- **THEN** `parseAgentFile()` returns a definition with `thinking: false` (default `off`)
+#### Scenario: Legacy `true` mapped to medium
+- **WHEN** an agent `.md` file contains `thinking: true`
+- **THEN** `parseAgentFile()` returns a definition with `thinking: "medium"`
 
-#### Scenario: Unknown thinking value
+#### Scenario: Legacy `false` mapped to off
+- **WHEN** an agent `.md` file contains `thinking: false`
+- **THEN** `parseAgentFile()` returns a definition with `thinking: "off"`
+
+#### Scenario: Unrecognized value warned and defaulted
 - **WHEN** an agent `.md` file contains `thinking: unknown`
-- **THEN** `parseAgentFile()` treats it as `off` and does NOT fail
+- **THEN** a console warning is emitted indicating the unrecognized thinking level
+- **AND** `parseAgentFile()` returns a definition with `thinking: "medium"`
+
+#### Scenario: Thinking field absent
+- **WHEN** an agent `.md` file does NOT contain a `thinking` field
+- **THEN** `parseAgentFile()` returns a definition with `thinking: "off"`
 
 ### Requirement: Thinking flag controls dispatched agent reasoning
-The `dispatchAgent()` function SHALL use the agent definition's `thinking` value to set the `--thinking` flag when spawning the child `pi` process. When `thinking` is `true`, the child process SHALL be spawned with `--thinking on`. When `thinking` is `false` or absent, the child process SHALL be spawned with `--thinking off`.
 
-#### Scenario: Agent with thinking on gets reasoning
-- **WHEN** a task is dispatched to an agent with `thinking: true`
-- **THEN** the spawned `pi` process receives `--thinking on`
+The `dispatchAgent()` function SHALL use the agent definition's `thinking` value to set the `--thinking` flag when spawning the child `pi` process. The value SHALL be passed directly as `--thinking <level>` where `<level>` is one of the six valid thinking level strings.
 
-#### Scenario: Agent with thinking off gets no reasoning
-- **WHEN** a task is dispatched to an agent with `thinking: false` or no `thinking` field
+#### Scenario: Agent with explicit level gets correct CLI flag
+- **WHEN** a task is dispatched to an agent with `thinking: "high"`
+- **THEN** the spawned `pi` process receives `--thinking high`
+
+#### Scenario: Agent with off level gets correct CLI flag
+- **WHEN** a task is dispatched to an agent with `thinking: "off"`
 - **THEN** the spawned `pi` process receives `--thinking off`
 
-#### Scenario: Existing behavior preserved for agents without thinking field
+#### Scenario: Agent with medium level gets correct CLI flag
+- **WHEN** a task is dispatched to an agent with `thinking: "medium"`
+- **THEN** the spawned `pi` process receives `--thinking medium`
+
+#### Scenario: Legacy mapped value produces valid CLI flag
+- **WHEN** a task is dispatched to an agent whose `thinking: on` was mapped to `"medium"`
+- **THEN** the spawned `pi` process receives `--thinking medium`
+
+#### Scenario: Agent without thinking field spawns with off
 - **WHEN** a task is dispatched to an agent whose definition has no `thinking` field
-- **THEN** behavior is identical to before this change (`--thinking off`)
-- **AND** the change is non-breaking
+- **THEN** the spawned `pi` process receives `--thinking off`
 
 ### Requirement: Explore relay protocol in system prompt
 The dispatcher's system prompt SHALL include instructions for the explore relay protocol: when an explore agent is available on the team, exploration SHALL be conducted through multi-turn dispatch with the explore agent. The dispatcher SHALL relay explore agent responses to the user and relay user responses back to the explore agent via continued dispatches.
