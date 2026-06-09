@@ -30,7 +30,7 @@ The agent's frontmatter description SHALL contain the word "explore", "investiga
 - **THEN** the explore agent is matched by its description containing an explore-signaling keyword
 
 ### Requirement: Follows openspec-explore skill stance
-The explore agent's system prompt SHALL embed the `openspec-explore` skill stance: curious, not prescriptive; open threads, not interrogations; visual; adaptive; patient; grounded in the codebase. The agent SHALL be a thinking partner, not a task executor.
+The explore agent's system prompt SHALL instruct the agent to adopt the `openspec-explore` skill stance by reading the skill file via the `read` tool. The skill file SHALL be the authoritative source for the stance content (curious, not prescriptive; open threads, not interrogations; visual; adaptive; patient; grounded in the codebase). The agent prompt SHALL reference the stance by name but SHALL NOT re-embed the full five-point stance description. The agent SHALL be a thinking partner, not a task executor.
 
 #### Scenario: Curious and adaptive behavior
 - **WHEN** dispatched with a user's vague idea
@@ -45,6 +45,28 @@ The explore agent's system prompt SHALL embed the `openspec-explore` skill stanc
 #### Scenario: Visual thinking
 - **WHEN** the topic has spatial or systemic relationships
 - **THEN** the agent uses ASCII diagrams to clarify thinking
+
+#### Scenario: Stance is referenced, not embedded
+- **WHEN** the agent system prompt is read
+- **THEN** it references the `openspec-explore` skill stance by name
+- **AND** it instructs the agent to read the skill to obtain the full stance
+- **AND** it does NOT contain an inline copy of the five stance qualities (curious, visual, adaptive, patient, grounded)
+
+### Requirement: Missing-skill hard-stop
+The explore agent SHALL attempt to `read` the `openspec-explore` skill file via the `read` tool at the start of every dispatch. If the `read` fails (skill not found or not available), the agent SHALL hard-stop: it SHALL return `Status: blocked` with a user-facing message stating the skill is required and recommending OpenSpec installation. The agent SHALL NOT proceed without the skill, SHALL NOT fall back to any inline content, and SHALL NOT attempt to reconstruct the procedure from memory.
+
+#### Scenario: Skill loaded successfully
+- **WHEN** the agent reads the `openspec-explore` skill file
+- **AND** the read succeeds
+- **THEN** the agent proceeds with its exploration using the skill's stance and procedures
+
+#### Scenario: Skill file missing
+- **WHEN** the agent attempts to read the `openspec-explore` skill file
+- **AND** the read fails (file not found)
+- **THEN** the agent returns `Status: blocked`
+- **AND** the blocked message states the `openspec-explore` skill is not available
+- **AND** the blocked message includes a recommendation to install OpenSpec
+- **AND** the agent does NOT proceed with exploration
 
 ### Requirement: Multi-turn conversation via session persistence
 The explore agent SHALL maintain conversation context across dispatches through Pi session persistence (`.pi/spec-sessions/explore.json`). Each dispatch SHALL resume prior context automatically.
@@ -99,7 +121,7 @@ The explore agent SHALL conclude every response with a structured status block. 
 - **THEN** the agent returns `Status: blocked` describing the blocker
 
 ### Requirement: Headless adaptation
-The explore agent SHALL run headless with no user interaction tools. When the explore stance would normally ask the user a question, the agent SHALL instead return `need-input` with the question in the response body.
+The explore agent SHALL run headless with no user interaction tools. The agent's system prompt SHALL open with a structured headless constraint block stating: the agent is a headless sub-agent, it has no AskUserQuestion or user interaction tools, it never waits for user input, and when it would normally ask the user it returns structured status instead. The constraint block SHALL follow the consistent structure used by all spec-teams agents. When the explore stance would normally ask the user a question, the agent SHALL instead return `need-input` with the question in the response body.
 
 #### Scenario: No user interaction tools available
 - **WHEN** the agent is dispatched
@@ -110,6 +132,11 @@ The explore agent SHALL run headless with no user interaction tools. When the ex
 - **WHEN** the agent would ask the user a question
 - **THEN** the agent returns `Status: need-input` with the question and context
 - **AND** the agent does NOT attempt to use AskUserQuestion
+
+#### Scenario: Headless constraint block follows consistent pattern
+- **WHEN** the agent system prompt is read
+- **THEN** the opening block follows the same structural pattern as other spec-teams agents (identity → headless constraint → role boundary)
+- **AND** the constraint states the agent has no user interaction tools and never waits for user input
 
 ### Requirement: Explore is read-only by default — write only for findings
 The explore agent SHALL NOT create OpenSpec artifacts (proposal.md, design.md, tasks.md, specs/). The agent MAY write exploration findings to `.pi/spec-sessions/explore-<name>.md` for handoff to the propose agent. The agent SHALL NOT modify existing project files.
