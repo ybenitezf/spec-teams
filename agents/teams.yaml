@@ -1,0 +1,15 @@
+openspec:
+  - explore
+  - propose
+  - apply
+  - verify
+  - archive
+  - worker
+
+full:
+  - explore
+  - propose
+  - apply
+  - verify
+  - archive
+  - worker

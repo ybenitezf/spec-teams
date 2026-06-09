@@ -39,6 +39,7 @@ interface AgentDef {
 	file: string;
 	thinking?: string;
 	model?: string;
+	optIn?: boolean;
 }
 
 interface AgentState {
@@ -121,7 +122,7 @@ function formatTokens(count: number): string {
 // ── Status Signal Detection ──────────────────────
 
 function detectStatusSignal(text: string): { signal: string; line: string } | null {
-	const match = text.match(/^Status:\s+(need-input|ready-to-propose|blocked|done-exploring)$/m);
+	const match = text.match(/^Status:\s+(need-input|ready-to-propose|blocked|done-exploring|done)$/m);
 	if (!match) return null;
 	return { signal: match[1], line: match[0] };
 }
@@ -199,6 +200,10 @@ function parseAgentFile(filePath: string): AgentDef | null {
 
 		const model = frontmatter.model || undefined;
 
+		// Extract opt-in field (case-insensitive match to "true")
+		const optInRaw = (frontmatter["opt-in"] || "").toLowerCase().trim();
+		const optIn = optInRaw === "true";
+
 		return {
 			name: frontmatter.name,
 			description: frontmatter.description || "",
@@ -207,6 +212,7 @@ function parseAgentFile(filePath: string): AgentDef | null {
 			file: filePath,
 			thinking,
 			model,
+			optIn,
 		};
 	} catch {
 		return null;
@@ -275,9 +281,9 @@ export default function (pi: ExtensionAPI) {
 			teams = {};
 		}
 
-		// If no teams defined, create a default "all" team
+		// If no teams defined, create a default "all" team excluding opt-in agents
 		if (Object.keys(teams).length === 0) {
-			teams = { all: allAgentDefs.map(d => d.name) };
+			teams = { all: allAgentDefs.filter(d => !d.optIn).map(d => d.name) };
 		}
 	}
 
@@ -635,7 +641,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Helper: split output text around signal lines, returning segments for Container children
 	function splitOutputWithSignals(text: string): { type: "text" | "signal"; content: string; signalName?: string }[] {
-		const pattern = /^(Status:\s+(need-input|ready-to-propose|blocked|done-exploring))$/gm;
+		const pattern = /^(Status:\s+(need-input|ready-to-propose|blocked|done-exploring|done))$/gm;
 		const segments: { type: "text" | "signal"; content: string; signalName?: string }[] = [];
 		let lastIndex = 0;
 		let match: RegExpExecArray | null;
@@ -968,6 +974,68 @@ export default function (pi: ExtensionAPI) {
 
 		const teamMembers = Array.from(agentStates.values()).map(s => displayName(s.def.name)).join(", ");
 
+		// Check if worker is on the active team
+		const hasWorker = Array.from(agentStates.values()).some(s => s.def.name === "worker");
+
+		// Build worker-related sections only when worker is on the team
+		const workerRoutingSection = hasWorker ? `
+## Non-OpenSpec Tasks
+
+Some user requests are NOT part of the OpenSpec workflow. These are
+general task execution requests that should be routed to the worker
+agent rather than an OpenSpec specialist:
+
+- **Git operations** — commit, branch, diff, rebase, pushing, pull requests
+- **File operations** — cleanup, rename, reorganize, search, replace
+- **Quick scripts** — one-off scripts, data transformations, automation
+- **Web requests** — fetch URLs, API calls, download files
+- **One-off edits** — quick fixes, typos, small refactors that don't
+  warrant a full OpenSpec lifecycle
+- **CLI operations** — running commands, checking status, installing packages
+
+When you receive such a request, dispatch the worker agent directly.
+Do NOT route non-OpenSpec tasks to explore or any OpenSpec agent.
+
+## Worker Hand-off
+
+When the worker agent completes a task, review its output for patterns
+that suggest an OpenSpec workflow might be warranted:
+
+- **Complexity uncovered** — The implementation revealed deeper issues
+  or interconnected concerns that warrant formal exploration.
+- **Architectural concerns** — The task touched foundational design
+  decisions that should be documented and reviewed.
+- **Multi-component changes** — The fix requires changes across
+  multiple components, services, or systems.
+- **Repeated similar tasks** — The user is making many similar changes
+  that could benefit from a structured change proposal.
+
+If you detect such patterns, suggest to the user that an OpenSpec
+exploration or proposal may be warranted. Describe what you found
+and why it merits formal treatment.
+
+**CRITICAL**: You SHALL NOT automatically dispatch an explore or
+propose agent without explicit user confirmation. Present your
+observation and let the user decide.
+
+## Worker Status Signals
+
+The worker agent concludes responses with a "Status:" block using
+two possible signals:
+
+**"Status: done"** — The task was completed successfully.
+- Review the output
+- Summarize what was accomplished for the user
+
+**"Status: blocked"** — The worker encountered an unrecoverable
+issue.
+- Present the blocker description to the user
+- Ask the user how they would like to proceed (retry, explore, abandon)
+
+Do NOT treat worker status signals as multi-turn relay signals.
+Worker always returns either done or blocked — there is no back-and-forth.
+` : "";
+
 		return {
 			systemPrompt: `You are an OpenSpec-aware dispatcher agent.
 You coordinate specialist agents to accomplish tasks within the
@@ -1022,10 +1090,15 @@ phase's role:
   validating spec compliance, auditing correctness, detecting gaps
 - **archive** — agents focused on mechanical finalization:
   syncing delta specs, merging into main specs, moving to
-  archive/ (does NOT audit or re-verify)
+  archive/ (does NOT audit or re-verify)${hasWorker ? `
+- **worker** — general-purpose task execution: git operations,
+  file operations, quick scripts, web requests, one-off edits.
+  Use for non-OpenSpec work only.` : ""}
 
 If no agent clearly matches, use the most general-purpose agent
-available. If unsure which phase applies, start with explore.
+available. If unsure which phase applies, start with explore.${hasWorker ? `
+For non-OpenSpec tasks (git, file ops, scripts, web, one-off edits),
+dispatch the worker agent instead of an OpenSpec agent.` : ""}
 
 ## Explore Relay Protocol
 
@@ -1124,7 +1197,7 @@ the user's intent:
   task
 - Summarize the outcome for the user, including which activity was
   used
-
+${workerRoutingSection}
 ## Rules
 
 - NEVER try to read, write, or execute code directly — you have no

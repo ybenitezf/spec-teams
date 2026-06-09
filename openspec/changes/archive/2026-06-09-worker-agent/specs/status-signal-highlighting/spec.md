@@ -1,11 +1,8 @@
-# status-signal-highlighting Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change redesign-dispatch-result. Update Purpose after archive.
-## Requirements
 ### Requirement: Relay protocol status signals are visually highlighted
 
-The `renderResult` function SHALL detect relay protocol status signal lines in the agent output and render them with visual emphasis (colored and bold) to distinguish them from normal output text. This applies to both OpenSpec relay protocol signals (`need-input`, `ready-to-propose`, `done-exploring`) and the worker agent's execution signals (`done`, `blocked`).
+The `renderResult` function SHALL detect status signal lines in the agent output and render them with visual emphasis (colored and bold) to distinguish them from normal output text. This applies to both OpenSpec relay protocol signals (`need-input`, `ready-to-propose`, `done-exploring`) and the worker agent's execution signals (`done`, `blocked`).
 
 #### Scenario: need-input signal detected and highlighted
 - **WHEN** the agent output contains a line matching `Status: need-input` (case-sensitive, at line start)
@@ -29,7 +26,7 @@ The `renderResult` function SHALL detect relay protocol status signal lines in t
 - **THEN** that line is rendered with success-colored emphasis (`theme.fg("success", theme.bold(...))`)
 
 #### Scenario: No signal present in output
-- **WHEN** the agent output does not contain any relay protocol signal line
+- **WHEN** the agent output does not contain any status signal line
 - **THEN** all output text is rendered with normal (muted) styling
 - **AND** no signal highlighting is applied
 
@@ -39,13 +36,13 @@ The `renderResult` function SHALL detect relay protocol status signal lines in t
 - **THEN** the signal line is highlighted with visual emphasis in the partial view
 
 #### Scenario: Signal detection is case-sensitive
-- **WHEN** the output contains `status: need-input` (lowercase) or `STATUS: NEED-INPUT`
+- **WHEN** the output contains `status: done` (lowercase) or `STATUS: DONE`
 - **THEN** it is NOT highlighted as a signal
 - **AND** is treated as normal output text
 
 ### Requirement: Signal detection uses regex matching
 
-Signal detection SHALL use a regex pattern anchored to line start that matches the known relay protocol signal strings: `need-input`, `ready-to-propose`, `blocked`, `done-exploring`, and `done`. The `done` pattern SHALL NOT match `done-exploring` — the longer string SHALL take precedence when both could match.
+Signal detection SHALL use a regex pattern anchored to line start that matches known status signal strings: `need-input`, `ready-to-propose`, `blocked`, `done-exploring`, and `done`. The `done` pattern SHALL NOT match `done-exploring` — the longer string SHALL take precedence when both could match.
 
 #### Scenario: Signal on its own line
 - **WHEN** the output contains `Status: blocked` as a standalone line
@@ -55,7 +52,7 @@ Signal detection SHALL use a regex pattern anchored to line start that matches t
 - **WHEN** the output ends with a block like:
   ```
   Status: need-input
-
+  
   The explore agent needs clarification on...
   ```
 - **THEN** the `Status: need-input` line is highlighted
@@ -73,12 +70,3 @@ Signal detection SHALL use a regex pattern anchored to line start that matches t
 #### Scenario: done as standalone signal
 - **WHEN** the output contains `Status: done` on its own line
 - **THEN** `detectStatusSignal()` returns `{ signal: "done", line: "Status: done" }`
-
-### Requirement: Signal highlighting does not alter output text
-
-Signal highlighting SHALL only add visual styling to the detected lines; it SHALL NOT modify, remove, or restructure the output text content. The original text must remain intact.
-
-#### Scenario: Highlighted text preserves original content
-- **WHEN** `Status: need-input` is detected and highlighted
-- **THEN** the text content "Status: need-input" is preserved exactly
-- **AND** only the theme styling is changed
