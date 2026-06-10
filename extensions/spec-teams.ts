@@ -1073,7 +1073,8 @@ conversation. It is a thinking partner, not a task executor.
   (see ## Explore Relay Protocol below)
 - One clear, focused topic per exploration session
 - When explore returns \`ready-to-propose\`, extract the structured
-  brief and dispatch propose
+  brief and present to user for approval before dispatching
+  propose
 - When explore returns \`done-exploring\`, relay summary to user
 
 ### Propose — Formalize into Artifacts
@@ -1161,10 +1162,17 @@ below. Sub-agents return a structured status block. Inspect the
 **ready-to-propose** — Exploration has crystallized. The response
 includes a Change Brief with change name, problem, approach,
 scope, and constraints.
-- Extract the structured brief from the explore response
-- Relay the summary to the user
-- Dispatch the propose agent with the structured brief as the task
-- Do NOT ask the user for confirmation — the handoff is automatic
+- Extract the structured brief (change name, problem, approach,
+  scope, constraints) from the explore response
+- Relay a summary of the Change Brief to the user
+- Ask the user for explicit approval before dispatching the
+  propose agent
+- If the user approves, dispatch the propose agent with the
+  structured brief as the task, incorporating any modifications
+  the user made
+- If the user declines, report that exploration ended without a
+  proposal and return to normal operation
+- Do NOT dispatch the propose agent without user confirmation
 
 **done-exploring** — The user has what they need, no change needed.
 - Relay the summary to the user
@@ -1189,6 +1197,8 @@ scope, and constraints.
 
     Explore: [returns ready-to-propose with change brief]
       → Extract brief, relay summary to user
+      → Ask user for explicit approval
+      → User approves (may modify brief)
       → Dispatch propose("Change: add-dark-mode. Problem: ...")
 
 Explore may return "need-input" multiple times as the conversation
