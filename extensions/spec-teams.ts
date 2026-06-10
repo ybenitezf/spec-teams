@@ -9,7 +9,8 @@
  * propose → apply → archive) so it can intelligently route user requests to
  * the right specialist agents based on workflow phase.
  *
- * Loads agent definitions from agents/*.md, .claude/agents/*.md, .pi/agents/*.md.
+ * Loads agent definitions from project-level (agents/*.md, .claude/agents/*.md, .pi/agents/*.md)
+ * and user-level (<getAgentDir()>/agents/, ~/.agents/agents/) directories.
  * Teams are defined in .pi/agents/teams.yaml — on boot a select dialog lets
  * you pick which team to work with. Only team members are available for dispatch.
  *
@@ -21,7 +22,7 @@
  * Usage: pi -e extensions/spec-teams.ts
  */
 
-import { type ExtensionAPI, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, getMarkdownTheme, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Text, truncateToWidth, visibleWidth, Container, Markdown, Spacer } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
@@ -219,11 +220,27 @@ function parseAgentFile(filePath: string): AgentDef | null {
 	}
 }
 
+/**
+ * Scan for agent .md definition files from both project-level and user-level directories.
+ *
+ * Scan order (project-first precedence on name collisions):
+ *   1. <cwd>/agents/
+ *   2. <cwd>/.claude/agents/
+ *   3. <cwd>/.pi/agents/
+ *   4. <getAgentDir()>/agents/        (~/.pi/agent/agents/ by default)
+ *   5. <homedir()>/.agents/agents/
+ *
+ * When two agents share the same name (case-insensitive), the first one found
+ * (project-level) wins and the later (user-level) is silently ignored.
+ */
 function scanAgentDirs(cwd: string): AgentDef[] {
 	const dirs = [
 		join(cwd, "agents"),
 		join(cwd, ".claude", "agents"),
 		join(cwd, ".pi", "agents"),
+		// User-level directories (scanned after project dirs so project wins collisions)
+		join(getAgentDir(), "agents"),
+		join(homedir(), ".agents", "agents"),
 	];
 
 	const agents: AgentDef[] = [];
@@ -372,7 +389,7 @@ export default function (pi: ExtensionAPI) {
 			return {
 				render(width: number): string[] {
 					if (agentStates.size === 0) {
-						return [theme.fg("dim", "No agents found. Add .md files to agents/")];
+						return [theme.fg("dim", "No agents found. Add .md files to agents/ or user-level agent dirs")];
 					}
 					const agents = Array.from(agentStates.values());
 					const cols = computeColumns(agentStates.size, width, maxColumns);
