@@ -1,58 +1,37 @@
-# thinking-collapse Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change redesign-dispatch-result. Update Purpose after archive.
-## Requirements
 ### Requirement: Thinking text is collapsed by default in final result
 
-When `renderResult` is called with `options.expanded === false` (the default collapsed state), thinking text SHALL NOT be displayed in full. Instead, a collapsed hint SHALL be shown inline between output paragraphs indicating the presence and size of thinking content. The hint SHALL use `theme.fg("thinkingText", ...)` theming when present.
+When the user's `hideThinkingBlock` setting is `true`, thinking text SHALL NOT be displayed in full. Instead, a collapsed hint SHALL be shown inline between output paragraphs indicating the presence and size of thinking content. The hint SHALL use `theme.fg("thinkingText", ...)` theming when present. When `hideThinkingBlock` is `false`, full thinking text SHALL be rendered as `Markdown` with `thinkingText` color + italic styling, matching native Pi's treatment of thinking content.
 
-#### Scenario: Collapsed final result hides thinking text
-- **WHEN** `renderResult` is called for a final result (`options.isPartial` is false)
-- **AND** `options.expanded` is false
+#### Scenario: hideThinkingBlock true shows collapsed hint
+- **WHEN** `renderResult` is called
+- **AND** the user's `hideThinkingBlock` setting is true
 - **AND** `details.thinkingText` is non-empty with 42 lines of content
-- **THEN** an inline dimmed hint is shown: `▶ Thinking (42 lines)` using `theme.fg("thinkingText", ...)` 
+- **THEN** an inline dimmed hint is shown: `▶ Thinking (42 lines)` using `theme.fg("thinkingText", ...)`
 - **AND** the full thinking text is not included in the rendered output
 - **AND** the hint appears inline between the output Markdown and the metrics footer
 
-#### Scenario: Collapsed final result with no thinking
-- **WHEN** `renderResult` is called for a final result
-- **AND** `options.expanded` is false
+#### Scenario: No thinking text present
+- **WHEN** `renderResult` is called
 - **AND** `details.thinkingText` is empty or undefined
 - **THEN** no thinking hint or block is displayed at all
 
-#### Scenario: Expanded final result shows full thinking inline
-- **WHEN** `renderResult` is called for a final result
-- **AND** `options.expanded` is true
+#### Scenario: hideThinkingBlock false shows full thinking as Markdown
+- **WHEN** `renderResult` is called
 - **AND** `details.thinkingText` is non-empty
 - **AND** the user's `hideThinkingBlock` setting is false
-- **THEN** the full thinking text is displayed inline between output and metrics
-- **AND** thinking text is styled with `theme.fg("thinkingText", ...)` to distinguish it from output
+- **THEN** the full thinking text is displayed inline between output and metrics, regardless of `options.expanded` or `isPartial` state
+- **AND** thinking text is rendered as `Markdown` with `{color: theme.fg("thinkingText", ...), italic: true}` styling
+- **AND** markdown formatting within thinking (code spans, bold, lists) is parsed and displayed correctly
 - **AND** no "─── Thinking ───" section divider is present
 
-#### Scenario: Expanded final result with hideThinkingBlock true
-- **WHEN** `renderResult` is called for a final result
-- **AND** `options.expanded` is true
+#### Scenario: hideThinkingBlock true never reveals full thinking
+- **WHEN** `renderResult` is called
 - **AND** `details.thinkingText` is non-empty
 - **AND** the user's `hideThinkingBlock` setting is true
 - **THEN** only the collapsed hint `▶ Thinking (N lines)` is shown
-- **AND** the full thinking text is NOT displayed even in expanded mode
-
-### Requirement: Thinking text is always collapsed in partial (streaming) view
-
-During streaming (`options.isPartial === true`), thinking text SHALL always be shown as a collapsed hint regardless of `options.expanded` state. The hint SHALL be rendered inline between the streaming output and metrics footer. This prevents walls of rapidly-changing dimmed text from obscuring the streaming output.
-
-#### Scenario: Partial view with thinking content inline
-- **WHEN** `options.isPartial` is true
-- **AND** `details.thinkingText` contains accumulated thinking lines
-- **THEN** thinking is shown as `▶ Thinking (N lines)` hint rendered inline with `theme.fg("thinkingText", ...)`
-- **AND** full thinking text is not displayed even if `options.expanded` is true
-- **AND** the hint appears between the output Markdown and the metrics footer
-
-#### Scenario: Partial view thinking hint updates with line count
-- **WHEN** `options.isPartial` is true
-- **AND** thinking lines accumulate from 5 to 20 lines between render calls
-- **THEN** the hint updates from `▶ Thinking (5 lines)` to `▶ Thinking (20 lines)`
+- **AND** the full thinking text is NOT displayed regardless of `options.expanded` or `isPartial` state
 
 ### Requirement: Thinking hint format
 
@@ -70,32 +49,33 @@ The thinking collapsed hint SHALL use the format `▶ Thinking (N lines)` where 
 - **WHEN** thinking text is an empty string
 - **THEN** no thinking hint or block is shown
 
-### Requirement: Thinking renders inline with Pi-native theming
+### Requirement: Thinking renders as Markdown with Pi-native theming
 
-Thinking blocks SHALL be rendered inline between the output Markdown and the metrics footer using `theme.fg("thinkingText", ...)` for consistent Pi-native styling. Thinking SHALL NOT be rendered in a separate labeled section. When rendered as full text (expanded, `hideThinkingBlock` false), thinking text SHALL use dimmed theming to visually distinguish it from the output.
+Thinking blocks SHALL be rendered inline between output paragraphs using the `Markdown` component with `thinkingText` color + italic styling, matching native Pi's `AssistantMessageComponent`. Thinking SHALL NOT be rendered in a separate labeled section. When `hideThinkingBlock` is true, a collapsed `▶ Thinking (N lines)` hint SHALL be shown instead, using `Text` with `theme.fg("thinkingText", ...)`.
 
-#### Scenario: Thinking inline between output and metrics
+#### Scenario: Thinking rendered as Markdown with code spans
 - **WHEN** `renderResult` renders thinking as full text
-- **THEN** the thinking block appears between the output `Markdown` component and the metrics footer `Text`
-- **AND** a thin visual delimiter or spacer separates thinking from output and metrics
+- **AND** thinking content contains "Check `auth.ts` for **critical** issues:\n- Token expiry\n- Session cleanup"
+- **THEN** the thinking block is rendered as `Markdown` with `{color: theme.fg("thinkingText", ...), italic: true}`
+- **AND** `auth.ts` is rendered with code span formatting
+- **AND** "critical" is rendered in bold
+- **AND** list items are rendered with bullet formatting
+- **AND** the thinking block appears between the output and the metrics footer
 
-#### Scenario: Thinking uses thinkingText theme
+#### Scenario: Thinking uses thinkingText theme with italic
 - **WHEN** `renderResult` renders thinking text
-- **THEN** the text is wrapped with `theme.fg("thinkingText", ...)` for the collapsed hint
-- **AND** full thinking text uses dimmed styling consistent with Pi's native thinking display
+- **THEN** the text is rendered via `Markdown` with `{color: (text) => theme.fg("thinkingText", text), italic: true}`
+- **AND** plain thinking text (no markdown) renders identically in appearance to the old `Text`-based rendering (no visual regression for simple thinking)
 
 ### Requirement: Thinking respects hideThinkingBlock user setting
 
-The `hideThinkingBlock` user setting (from Pi settings, default `false`) SHALL control whether full thinking text is ever displayed. When `true`, even in expanded mode, only the collapsed hint `▶ Thinking (N lines)` SHALL be shown.
+The `hideThinkingBlock` user setting (from Pi settings, default `false`) SHALL be the sole control for whether full thinking text is displayed. When `true`, only the collapsed hint `▶ Thinking (N lines)` SHALL be shown. When `false`, full thinking text SHALL be rendered as `Markdown` with `thinkingText` color + italic styling in all states (streaming and final), without any dependency on `options.expanded` or `isPartial` state.
 
 #### Scenario: hideThinkingBlock true suppresses full thinking
 - **WHEN** `hideThinkingBlock` is true
-- **AND** `options.expanded` is true
 - **THEN** only `▶ Thinking (N lines)` is shown, styled with `theme.fg("thinkingText", ...)`
-- **AND** the full thinking text is never revealed
+- **AND** the full thinking Markdown is never rendered, regardless of `options.expanded` or `isPartial` state
 
-#### Scenario: hideThinkingBlock false allows expanded thinking
+#### Scenario: hideThinkingBlock false shows expanded thinking as Markdown in all states
 - **WHEN** `hideThinkingBlock` is false (default)
-- **AND** `options.expanded` is true
-- **THEN** full thinking text is displayed inline with dimmed theming
-
+- **THEN** full thinking text is displayed as `Markdown` with thinkingText color + italic, regardless of `options.expanded` or `isPartial` state

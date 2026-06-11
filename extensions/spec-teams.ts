@@ -546,7 +546,7 @@ export default function (pi: ExtensionAPI) {
 		task: string,
 		ctx: any,
 		onUpdate?: (update: any) => void,
-	): Promise<{ output: string; exitCode: number; elapsed: number; inputTokens: number; outputTokens: number; cost: number; toolCount: number; contextPct: number; thinkingText: string; hideThinkingBlock: boolean }> {
+	): Promise<{ output: string; exitCode: number; elapsed: number; inputTokens: number; outputTokens: number; cost: number; toolCount: number; contextPct: number; thinkingText: string; hideThinkingBlock: boolean; orderedContent: {type: "text" | "thinking", content: string}[] }> {
 		const key = agentName.toLowerCase();
 		const state = agentStates.get(key);
 		if (!state) {
@@ -561,6 +561,7 @@ export default function (pi: ExtensionAPI) {
 				contextPct: 0,
 				thinkingText: "",
 				hideThinkingBlock: hideThinkingBlockSetting,
+				orderedContent: [],
 			});
 		}
 
@@ -576,6 +577,7 @@ export default function (pi: ExtensionAPI) {
 				contextPct: 0,
 				thinkingText: "",
 				hideThinkingBlock: hideThinkingBlockSetting,
+				orderedContent: [],
 			});
 		}
 
@@ -627,8 +629,7 @@ export default function (pi: ExtensionAPI) {
 
 		args.push(task);
 
-		const textChunks: string[] = [];
-		const thinkingChunks: string[] = [];
+		const orderedContent: {type: "text" | "thinking", content: string}[] = [];
 
 		// Throttled update helper — pushes live streaming state to onUpdate at most every 50ms
 		let lastPush = 0;
@@ -645,8 +646,9 @@ export default function (pi: ExtensionAPI) {
 					status: "dispatching",
 					model,
 					elapsed: state.elapsed,
-					outputText: textChunks.join(""),
-					thinkingText: thinkingChunks.join(""),
+					outputText: orderedContent.filter(s => s.type === "text").map(s => s.content).join(""),
+					thinkingText: orderedContent.filter(s => s.type === "thinking").map(s => s.content).join(""),
+					orderedContent: [...orderedContent],
 					toolCount: state.toolCount,
 					contextPct: state.contextPct,
 					inputTokens: state.inputTokens,
@@ -676,14 +678,24 @@ export default function (pi: ExtensionAPI) {
 						if (event.type === "message_update") {
 							const delta = event.assistantMessageEvent;
 							if (delta?.type === "text_delta") {
-								textChunks.push(delta.delta || "");
-								const full = textChunks.join("");
-								const last = full.split("\n").filter((l: string) => l.trim()).pop() || "";
+								const lastSeg = orderedContent[orderedContent.length - 1];
+								if (lastSeg?.type === "text") {
+									lastSeg.content += (delta.delta || "");
+								} else {
+									orderedContent.push({ type: "text", content: delta.delta || "" });
+								}
+								const textOutput = orderedContent.filter(s => s.type === "text").map(s => s.content).join("");
+								const last = textOutput.split("\n").filter((l: string) => l.trim()).pop() || "";
 								state.lastWork = last;
 								updateWidget();
 								pushUpdate();
 							} else if (delta?.type === "thinking_delta") {
-								thinkingChunks.push(delta.delta || "");
+								const lastSeg = orderedContent[orderedContent.length - 1];
+								if (lastSeg?.type === "thinking") {
+									lastSeg.content += (delta.delta || "");
+								} else {
+									orderedContent.push({ type: "thinking", content: delta.delta || "" });
+								}
 								pushUpdate();
 							}
 						} else if (event.type === "tool_execution_start") {
@@ -729,7 +741,21 @@ export default function (pi: ExtensionAPI) {
 						const event = JSON.parse(buffer);
 						if (event.type === "message_update") {
 							const delta = event.assistantMessageEvent;
-							if (delta?.type === "text_delta") textChunks.push(delta.delta || "");
+							if (delta?.type === "text_delta") {
+								const lastSeg = orderedContent[orderedContent.length - 1];
+								if (lastSeg?.type === "text") {
+									lastSeg.content += (delta.delta || "");
+								} else {
+									orderedContent.push({ type: "text", content: delta.delta || "" });
+								}
+							} else if (delta?.type === "thinking_delta") {
+								const lastSeg = orderedContent[orderedContent.length - 1];
+								if (lastSeg?.type === "thinking") {
+									lastSeg.content += (delta.delta || "");
+								} else {
+									orderedContent.push({ type: "thinking", content: delta.delta || "" });
+								}
+							}
 						}
 					} catch {}
 				}
@@ -743,7 +769,7 @@ export default function (pi: ExtensionAPI) {
 					state.sessionFile = agentSessionFile;
 				}
 
-				const full = textChunks.join("");
+				const full = orderedContent.filter(s => s.type === "text").map(s => s.content).join("");
 				state.lastWork = full.split("\n").filter((l: string) => l.trim()).pop() || "";
 				updateWidget();
 
@@ -761,8 +787,9 @@ export default function (pi: ExtensionAPI) {
 					cost: state.cost,
 					toolCount: state.toolCount,
 					contextPct: state.contextPct,
-					thinkingText: thinkingChunks.join(""),
+					thinkingText: orderedContent.filter(s => s.type === "thinking").map(s => s.content).join(""),
 					hideThinkingBlock: hideThinkingBlockSetting,
+					orderedContent: [...orderedContent],
 				});
 			});
 
@@ -780,8 +807,9 @@ export default function (pi: ExtensionAPI) {
 					cost: state.cost,
 					toolCount: state.toolCount,
 					contextPct: state.contextPct,
-					thinkingText: thinkingChunks.join(""),
+					thinkingText: orderedContent.filter(s => s.type === "thinking").map(s => s.content).join(""),
 					hideThinkingBlock: hideThinkingBlockSetting,
+					orderedContent: [...orderedContent],
 				});
 			});
 		});
@@ -867,6 +895,7 @@ export default function (pi: ExtensionAPI) {
 						toolCount: result.toolCount,
 						contextPct: result.contextPct,
 						thinkingText: result.thinkingText,
+						orderedContent: result.orderedContent,
 						hideThinkingBlock: hideThinkingBlockSetting,
 					},
 				};
@@ -875,7 +904,7 @@ export default function (pi: ExtensionAPI) {
 				refreshStatus();
 				return {
 					content: [{ type: "text", text: `Error dispatching to ${agent}: ${err?.message || err}` }],
-					details: { agent, task, status: "error", model: resolvedModel, elapsed: 0, exitCode: 1, fullOutput: "", inputTokens: 0, outputTokens: 0, cost: 0, toolCount: 0, contextPct: 0, thinkingText: "", hideThinkingBlock: hideThinkingBlockSetting },
+					details: { agent, task, status: "error", model: resolvedModel, elapsed: 0, exitCode: 1, fullOutput: "", inputTokens: 0, outputTokens: 0, cost: 0, toolCount: 0, contextPct: 0, thinkingText: "", orderedContent: [], hideThinkingBlock: hideThinkingBlockSetting },
 				};
 			}
 		},
@@ -937,65 +966,120 @@ export default function (pi: ExtensionAPI) {
 				));
 			}
 
-			// Task prefix — dimmed text, no "─── Task ───" divider, only if task present
+			// Task prefix — dimmed Markdown, no "─── Task ───" divider, only if task present
 			if (details.task) {
 				container.addChild(new Spacer(1));
-				container.addChild(new Text(theme.fg("dim", details.task), 0, 0));
+				container.addChild(new Markdown(details.task, 0, 0, mdTheme, { color: (text) => theme.fg("dim", text) }));
 			}
 
-			// Output section — live Markdown (even during streaming), no "─── Output ───" divider
-			const outputSource = isPartial ? details.outputText : details.fullOutput;
-			if (outputSource) {
-				container.addChild(new Spacer(1));
-
-				const output = isPartial
-					? outputSource
-					: (options.expanded
-						? outputSource
-						: (outputSource.length > 4000
-							? outputSource.slice(0, 4000) + "\n... [truncated]"
-							: outputSource));
-
-				// Scan for signals in output
-				const signal = detectStatusSignal(output);
-				if (signal) {
-					const segments = splitOutputWithSignals(output);
-					for (const seg of segments) {
-						if (seg.type === "signal") {
-							container.addChild(renderSignalLine(seg.signalName!, seg.content));
-						} else if (seg.content.trim()) {
-							container.addChild(new Markdown(seg.content, 0, 0, mdTheme));
-						}
-					}
-				} else {
-					container.addChild(new Markdown(output, 0, 0, mdTheme));
+			// ── Get ordered content for interleaved rendering ──
+			let orderedContent: {type: "text" | "thinking", content: string}[] = details.orderedContent;
+			if (!orderedContent) {
+				// Backward compatibility: construct from outputText/thinkingText
+				orderedContent = [];
+				const outputSource = isPartial ? details.outputText : details.fullOutput;
+				if (outputSource) {
+					orderedContent.push({ type: "text", content: outputSource });
+				}
+				if (details.thinkingText) {
+					orderedContent.push({ type: "thinking", content: details.thinkingText });
 				}
 			}
 
-			// Thinking section — inline between output and metrics, no "─── Thinking ───" divider
-			if (details.thinkingText) {
-				const thinkingLines = details.thinkingText.split("\n").length;
-				const showMore = thinkingLines > 50 ? ` (${thinkingLines} lines total)` : "";
+			// ── Compute total thinking lines for collapsed hint ──
+			const totalThinkingLines = orderedContent
+				.filter((s: any) => s.type === "thinking")
+				.reduce((sum: number, s: any) => sum + s.content.split("\n").length, 0);
 
-				// In partial: always collapsed hint
-				// In final: depends on expanded and hideThinkingBlock
-				const showFull = !isPartial && options.expanded && !shouldHideThinking;
+			// ── Concatenated text for signal detection and collapsed mode ──
+			const allText = orderedContent
+				.filter((s: any) => s.type === "text")
+				.map((s: any) => s.content)
+				.join("");
 
+			// ── Content section — interleaved rendering from orderedContent ──
+			if (allText) {
 				container.addChild(new Spacer(1));
 
-				if (showFull) {
-					// Full thinking text with Pi-native thinking theming (always full when expanded)
+				const signal = detectStatusSignal(allText);
+
+				if (isPartial || options.expanded) {
+					// ── Expanded / partial: interleaved rendering in stream order ──
+					let prevType: string | null = null;
+					for (const segment of orderedContent) {
+						if (segment.type === "thinking") {
+							if (shouldHideThinking) continue;
+							if (!segment.content.trim()) continue;
+							if (prevType !== null && segment.type !== prevType) {
+								container.addChild(new Spacer(1));
+							}
+							prevType = segment.type;
+							container.addChild(new Markdown(segment.content, 0, 0, mdTheme, {
+								color: (text) => theme.fg("thinkingText", text),
+								italic: true,
+							}));
+						} else {
+							if (!segment.content.trim()) continue;
+							if (prevType !== null && segment.type !== prevType) {
+								container.addChild(new Spacer(1));
+							}
+							prevType = segment.type;
+							if (signal) {
+								const segs = splitOutputWithSignals(segment.content);
+								for (const seg of segs) {
+									if (seg.type === "signal") {
+										container.addChild(renderSignalLine(seg.signalName!, seg.content));
+									} else if (seg.content.trim()) {
+										container.addChild(new Markdown(seg.content, 0, 0, mdTheme));
+									}
+								}
+							} else {
+								container.addChild(new Markdown(segment.content, 0, 0, mdTheme));
+							}
+						}
+					}
+				} else {
+					// ── Collapsed mode: concatenated text, no interleaving ──
+					const truncated = allText.length > 4000
+						? allText.slice(0, 4000) + "\n... [truncated]"
+						: allText;
+
+					if (signal) {
+						const segments = splitOutputWithSignals(truncated);
+						for (const seg of segments) {
+							if (seg.type === "signal") {
+								container.addChild(renderSignalLine(seg.signalName!, seg.content));
+							} else if (seg.content.trim()) {
+								container.addChild(new Markdown(seg.content, 0, 0, mdTheme));
+							}
+						}
+					} else {
+						container.addChild(new Markdown(truncated, 0, 0, mdTheme));
+					}
+				}
+			}
+
+			// ── Post-text thinking section (collapsed hint or collapsed-mode full thinking) ──
+			const hasThinking = orderedContent.some((s: any) => s.type === "thinking" && s.content.trim());
+			if (hasThinking && (shouldHideThinking || (!isPartial && !options.expanded))) {
+				container.addChild(new Spacer(1));
+				if (shouldHideThinking) {
+					// Collapsed hint — Text, not Markdown (control element)
+					const showMore = totalThinkingLines > 50 ? ` (${totalThinkingLines} lines total)` : "";
 					container.addChild(new Text(
-						theme.fg("thinkingText", details.thinkingText),
+						theme.fg("thinkingText", `▶ Thinking (${totalThinkingLines} line${totalThinkingLines !== 1 ? "s" : ""})${showMore}`),
 						0, 0,
 					));
 				} else {
-					// Collapsed hint with Pi-native thinking theming
-					// Max-height guard: show total count if > 50 lines
-					container.addChild(new Text(
-						theme.fg("thinkingText", `▶ Thinking (${thinkingLines} line${thinkingLines !== 1 ? "s" : ""})${showMore}`),
-						0, 0,
-					));
+					// Collapsed mode, full thinking — single Markdown block with thinkingText color + italic
+					const allThinking = orderedContent
+						.filter((s: any) => s.type === "thinking")
+						.map((s: any) => s.content)
+						.join("");
+					container.addChild(new Markdown(allThinking, 0, 0, mdTheme, {
+						color: (text) => theme.fg("thinkingText", text),
+						italic: true,
+					}));
 				}
 			}
 

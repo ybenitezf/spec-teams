@@ -1,9 +1,30 @@
-# live-subagent-streaming Specification
+## MODIFIED Requirements
 
-## Purpose
+### Requirement: thinking_delta events are captured
 
-Enable live streaming of sub-agent output in the spec-teams extension. When the `dispatch_agent` tool dispatches a sub-agent (explore, propose, apply, verify, archive), the TUI renders real-time progress — streaming text output, thinking content, tool call counts, and context usage — replacing the static `working...` placeholder.
-## Requirements
+The `dispatchAgent()` function SHALL capture `thinking_delta` events from the sub-agent stdout stream. Text and thinking content SHALL be accumulated in a single ordered array (`orderedContent`) that preserves stream order by merging consecutive same-type deltas and splitting on type change. This ensures `renderResult` can render content interleaved as the sub-agent emitted it, rather than all output followed by all thinking.
+
+#### Scenario: thinking_delta event received
+- **WHEN** the sub-agent process emits a `thinking_delta` event via stdout JSON stream
+- **THEN** the delta content is appended to the last segment in `orderedContent` if it is type `"thinking"`, or a new `{type: "thinking", content: delta}` segment is pushed if the last segment is type `"text"` or the array is empty
+- **AND** the next `onUpdate` call includes the ordered content in the details payload
+
+#### Scenario: text_delta followed by thinking_delta followed by text_delta
+- **WHEN** the sub-agent emits: text_delta("Hello") → thinking_delta("Let me check...") → text_delta("World")
+- **THEN** `orderedContent` is: `[{type: "text", content: "Hello"}, {type: "thinking", content: "Let me check..."}, {type: "text", content: "World"}]`
+- **AND** `renderResult` renders them interleaved with blank line separators between different types: Markdown("Hello") → Spacer(1) → Markdown("Let me check...", thinkingText+italic) → Spacer(1) → Markdown("World")
+
+#### Scenario: Consecutive same-type deltas are merged
+- **WHEN** the sub-agent emits: text_delta("Hello ") → text_delta("World")
+- **THEN** `orderedContent` is: `[{type: "text", content: "Hello World"}]`
+- **AND** no redundant Markdown component is created for the consecutive same-type deltas
+
+#### Scenario: Agent without thinking mode
+- **WHEN** a sub-agent does not emit any `thinking_delta` events (thinking mode disabled)
+- **THEN** `orderedContent` contains only text-type segments
+- **AND** no error occurs
+- **AND** `outputText` and `thinkingText` are still populated for backward compatibility with the dispatcher LLM
+
 ### Requirement: dispatchAgent accepts optional onUpdate callback
 
 The `dispatchAgent()` function SHALL accept an optional `onUpdate` parameter of type `(update: PartialResult) => void`. When provided, `dispatchAgent` SHALL call `onUpdate` with streaming progress state during sub-agent execution. When not provided, `dispatchAgent` SHALL behave identically to before this change.
@@ -33,74 +54,60 @@ The bridge between sub-agent streaming events and the `onUpdate` callback SHALL 
 
 #### Scenario: State accumulates between throttled calls
 - **WHEN** streaming events arrive faster than the 50ms throttle interval
-- **THEN** all text content from the events is accumulated in `textChunks`
+- **THEN** all text and thinking content from the events is accumulated in `orderedContent`
 - **AND** the next `onUpdate` call includes all accumulated content
-
-### Requirement: thinking_delta events are captured
-
-The `dispatchAgent()` function SHALL capture `thinking_delta` events from the sub-agent stdout stream. Thinking content SHALL be accumulated in a separate `thinkingChunks` array and included in the `onUpdate` payload as `thinkingText`.
-
-#### Scenario: thinking_delta event received
-- **WHEN** the sub-agent process emits a `thinking_delta` event via stdout JSON stream
-- **THEN** the delta content is accumulated in `thinkingChunks`
-- **AND** the next `onUpdate` call includes the accumulated thinking text
-
-#### Scenario: Agent without thinking mode
-- **WHEN** a sub-agent does not emit any `thinking_delta` events (thinking mode disabled)
-- **THEN** `thinkingText` in the `onUpdate` payload is an empty string
-- **AND** no error occurs
 
 ### Requirement: renderResult renders live partial state
 
-When `renderResult` is called with `options.isPartial === true`, it SHALL render a live progress display using `renderShell: "self"` escaping the Box frame. The partial display SHALL include: agent icon and name, elapsed time in human-readable format (formatted via `formatDuration()`), the complete original task/prompt displayed as dimmed prefix text (no "─── Task ───" divider), the full accumulated streaming text output rendered via the `Markdown` component (with syntax highlighting applied to completed code blocks), a collapsed thinking hint rendered inline between output paragraphs if thinking content is present and `hideThinkingBlock` is not active, and a subtle single-line metrics footer.
+When `renderResult` is called with `options.isPartial === true`, it SHALL render a live progress display using `renderShell: "self"` escaping the Box frame. The partial display SHALL include: agent icon and name, elapsed time in human-readable format (formatted via `formatDuration()`), the complete original task/prompt displayed as dimmed Markdown prefix (no "─── Task ───" divider), the content segments interleaved in stream order with blank line separators between different-type segments (text as `Markdown`, thinking as `Markdown` with thinkingText color + italic), and a subtle single-line metrics footer.
 
 #### Scenario: Partial render with streaming output via Markdown
 - **WHEN** `renderResult` is called with `isPartial: true`
-- **AND** the details object contains streaming text output
-- **THEN** the rendered output is a self-rendered Container (no Box) with header, task prefix, Markdown output, and metrics line
+- **AND** the details object contains ordered content segments
+- **THEN** the rendered output is a self-rendered Container (no Box) with header, task prefix (dimmed Markdown), interleaved content segments via Markdown (with blank line separators between text and thinking segments), and metrics line
 - **AND** the header includes the agent icon (`●`), agent name, and elapsed time in human-readable format (e.g., "45s", "2m 30s")
-- **AND** the output section renders the accumulated streaming text as a `Markdown` component (not plain `Text`)
-- **AND** code blocks within the streaming output receive syntax highlighting where parsing is complete
+- **AND** text segments render as `Markdown` with default theme
+- **AND** thinking segments render as `Markdown` with thinkingText color + italic
+- **AND** code blocks within any segment receive syntax highlighting where parsing is complete
 - **AND** no "─── Output ───" divider is present
 
 #### Scenario: Partial render before any output shows full task
 - **WHEN** `renderResult` is called with `isPartial: true`
-- **AND** no streaming text output has been received yet
-- **THEN** the rendered output includes the task as dimmed prefix text (no truncation, no divider)
-- **AND** the output Markdown area is omitted
+- **AND** ordered content is empty
+- **THEN** the rendered output includes the task as dimmed Markdown prefix text (no truncation, no divider)
+- **AND** the content area is omitted
 
-#### Scenario: Partial render with thinking content inline
+#### Scenario: Partial render with thinking content interleaved
 - **WHEN** `renderResult` is called with `isPartial: true`
-- **AND** the details object contains thinking text
-- **THEN** thinking content is shown as a collapsed hint `▶ Thinking (N lines)` rendered inline between output and metrics
-- **AND** thinking text uses `theme.fg("thinkingText", ...)` theming
-- **AND** the full thinking text is NOT displayed in the partial view unless expanded
+- **AND** the ordered content contains interleaved text and thinking segments
+- **THEN** thinking segments are rendered between text segments in stream order, with blank line separators at each text↔thinking boundary
+- **AND** when hideThinkingBlock is false, thinking uses `Markdown` with thinkingText color + italic
+- **AND** when hideThinkingBlock is true, a single `▶ Thinking (N lines)` hint replaces all thinking segments (N = total lines across all thinking segments)
 
 ### Requirement: Final renderResult shows task and output
 
-When `renderResult` is called with `options.isPartial === false` (or `isPartial` absent), the rendering SHALL use `renderShell: "self"` escaping the Box frame. The rendering SHALL display: a status icon (`✓` or `✗`), agent name, elapsed time in human-readable format (formatted via `formatDuration()`), the complete input task as dimmed prefix text (no "─── Task ───" divider), the final output rendered through the `Markdown` component (truncated to 4000 characters in normal mode, full when expanded via Ctrl+O), thinking rendered inline between output paragraphs (collapsed hint when not expanded, full text when expanded, respecting `hideThinkingBlock`), and a subtle single-line metrics footer.
+When `renderResult` is called with `options.isPartial === false` (or `isPartial` absent), the rendering SHALL use `renderShell: "self"` escaping the Box frame. The rendering SHALL display: a status icon (`✓` or `✗`), agent name, elapsed time in human-readable format (formatted via `formatDuration()`), the complete input task as dimmed Markdown prefix (no "─── Task ───" divider), content segments interleaved in stream order with blank line separators between different-type segments (text via `Markdown`, thinking via `Markdown` with thinkingText color + italic, truncated to 4000 characters in normal mode, full when expanded via Ctrl+O), and a subtle single-line metrics footer.
 
 #### Scenario: Final render with done status
 - **WHEN** `renderResult` is called with `isPartial: false` or `isPartial` absent
 - **AND** the agent completed successfully
-- **THEN** the rendered output is a self-rendered Container with: header (`✓ {agent} {formatted-duration}`), dimmed task prefix, Markdown output, inline thinking (if present), and metrics footer
+- **THEN** the rendered output is a self-rendered Container with: header (`✓ {agent} {formatted-duration}`), dimmed Markdown task prefix, interleaved content segments via Markdown (with blank line separators between text and thinking segments), and metrics footer
 - **AND** no "─── Output ───" or "─── Thinking ───" dividers are present
-- **AND** expansion (Ctrl+O) shows the full untruncated output through `Markdown`
+- **AND** expansion (Ctrl+O) shows the full untruncated output
 
 #### Scenario: Final render with error status
 - **WHEN** `renderResult` is called with `isPartial: false` or `isPartial` absent
 - **AND** the agent encountered an error
 - **THEN** the rendered header includes `✗ {agent} {formatted-duration}` (e.g., "✗ explore 2m 30s")
-- **AND** the output renders the error content through `Markdown`, truncated to 4000 characters
+- **AND** the output renders through `Markdown`, truncated to 4000 characters
 - **AND** expansion (Ctrl+O) shows the full untruncated output
 
-#### Scenario: Final render includes inline thinking
+#### Scenario: Final render includes interleaved thinking
 - **WHEN** `renderResult` is called for a final result
-- **AND** `details.thinkingText` is non-empty
-- **THEN** when `options.expanded` is false, thinking shows `▶ Thinking (N lines)` hint inline
-- **AND** when `options.expanded` is true, the full thinking text is displayed inline with `theme.fg("thinkingText", ...)` styling
-- **AND** when `hideThinkingBlock` is true, only the `▶` hint is shown even in expanded mode
-- **AND** when `details.thinkingText` is empty, no thinking block is rendered
+- **AND** ordered content contains thinking segments interleaved with text
+- **THEN** when hideThinkingBlock is false, thinking segments are rendered as `Markdown` with thinkingText color + italic, interleaved between text segments in stream order with blank line separators at text↔thinking boundaries
+- **AND** when hideThinkingBlock is true, a `▶ Thinking (N lines)` hint is shown (N = total thinking lines)
+- **AND** when there is no thinking content, no thinking hint or block is rendered
 
 #### Scenario: Final render includes metrics footer
 - **WHEN** `renderResult` is called for a final result
@@ -176,4 +183,3 @@ All display locations that show elapsed time SHALL use the `formatDuration()` fu
 #### Scenario: Widget header after completion uses formatted duration
 - **WHEN** the widget header displays elapsed time after completion (final state)
 - **THEN** it uses `formatDuration()` to format the elapsed time
-
