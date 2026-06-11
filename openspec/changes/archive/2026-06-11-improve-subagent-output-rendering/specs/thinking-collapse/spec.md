@@ -1,8 +1,5 @@
-# thinking-collapse Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change redesign-dispatch-result. Update Purpose after archive.
-## Requirements
 ### Requirement: Thinking text is collapsed by default in final result
 
 When `renderResult` is called with `options.expanded === false` (the default collapsed state), thinking text SHALL NOT be displayed in full. Instead, a collapsed hint SHALL be shown inline between output paragraphs indicating the presence and size of thinking content. The hint SHALL use `theme.fg("thinkingText", ...)` theming when present.
@@ -70,6 +67,8 @@ The thinking collapsed hint SHALL use the format `▶ Thinking (N lines)` where 
 - **WHEN** thinking text is an empty string
 - **THEN** no thinking hint or block is shown
 
+## ADDED Requirements
+
 ### Requirement: Thinking renders inline with Pi-native theming
 
 Thinking blocks SHALL be rendered inline between the output Markdown and the metrics footer using `theme.fg("thinkingText", ...)` for consistent Pi-native styling. Thinking SHALL NOT be rendered in a separate labeled section. When rendered as full text (expanded, `hideThinkingBlock` false), thinking text SHALL use dimmed theming to visually distinguish it from the output.
@@ -98,4 +97,3 @@ The `hideThinkingBlock` user setting (from Pi settings, default `false`) SHALL c
 - **WHEN** `hideThinkingBlock` is false (default)
 - **AND** `options.expanded` is true
 - **THEN** full thinking text is displayed inline with dimmed theming
-

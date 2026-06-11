@@ -1,8 +1,5 @@
-# dispatch-result-rendering Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change redesign-dispatch-result. Update Purpose after archive.
-## Requirements
 ### Requirement: renderResult uses Container-based layout with section dividers
 
 The `renderResult` function SHALL escape the default Box frame by using `renderShell: "self"` on the tool definition. The result SHALL be rendered as a flowing, Pi-native layout without explicit "─── Section ───" dividers. The layout SHALL consist of: a subtle agent label header (status icon, agent name, elapsed time), the task rendered as dimmed prefix text, the output rendered as flowing Markdown, thinking rendered inline between output paragraphs (when present), and a subtle single-line metrics footer.
@@ -48,50 +45,6 @@ The agent output text SHALL be rendered through the `Markdown` component from `@
 - **WHEN** the agent output contains no special Markdown syntax
 - **THEN** the text is rendered as-is by the Markdown component without errors in both partial and final views
 
-### Requirement: renderCall shows agent name, model, and task preview
-
-The `renderCall` function SHALL display the agent name, optional model information, and a truncated task preview using themed formatting consistent with the subagent example pattern.
-
-#### Scenario: renderCall with model available
-- **WHEN** `renderCall` is called with args containing `agent: "explore"` and `task: "Investigate the codebase..."`
-- **AND** model information is available in the agent definition
-- **THEN** the rendered text includes `dispatch_agent` (bold, themed toolTitle), the agent name (themed accent), model in parentheses if available, and a truncated task preview (themed dim)
-
-#### Scenario: renderCall with task exceeding 60 characters
-- **WHEN** the task string exceeds 60 characters
-- **THEN** the displayed task preview is truncated to 57 characters followed by `...`
-
-### Requirement: truncation marker for collapsed final output
-
-When `options.expanded` is false, output text SHALL be truncated to 4000 characters with a `... [truncated]` marker appended. When `options.expanded` is true, the full untruncated output SHALL be shown through the Markdown component.
-
-#### Scenario: Collapsed output exceeds 4000 characters
-- **WHEN** `options.expanded` is false
-- **AND** `details.fullOutput` exceeds 4000 characters
-- **THEN** the rendered output is truncated to 4000 characters with `... [truncated]` appended
-- **AND** the truncated text is passed to the Markdown component
-
-#### Scenario: Expanded output shows full content
-- **WHEN** `options.expanded` is true
-- **THEN** the full `details.fullOutput` text is passed to the Markdown component without truncation
-
-### Requirement: Expanded mode includes all sections
-
-When `options.expanded` is true, the rendered result SHALL include all available content: header, task prefix, full untruncated output via Markdown, full thinking text (unless `hideThinkingBlock` is true), and metrics footer.
-
-#### Scenario: Expanded result shows thinking inline and full output
-- **WHEN** `options.expanded` is true
-- **AND** thinking text is present in the result details
-- **THEN** the full thinking text is displayed inline between output paragraphs with `theme.fg("thinkingText", ...)` styling
-- **AND** the full untruncated output is displayed through Markdown
-- **AND** no "─── Thinking ───" or "─── Output ───" section dividers are present
-
-#### Scenario: Expanded result respects hideThinkingBlock
-- **WHEN** `options.expanded` is true
-- **AND** the user's `hideThinkingBlock` setting is true
-- **THEN** thinking content shows only the collapsed hint `▶ Thinking (N lines)`
-- **AND** the full thinking text is NOT displayed even in expanded mode
-
 ### Requirement: Partial streaming result uses Container layout
 
 When `options.isPartial` is true, `renderResult` SHALL render a Container with: header (agent icon, name, elapsed), task as dimmed prefix, live output via `Markdown` component, inline thinking block (collapsed hint when not expanded, full text when expanded), and a subtle single-line metrics footer.
@@ -115,6 +68,25 @@ When `options.isPartial` is true, `renderResult` SHALL render a Container with: 
 - **AND** `details.outputText` is empty
 - **THEN** the task is displayed as dimmed prefix text (no "─── Task ───" divider)
 - **AND** the output Markdown area is not displayed
+
+### Requirement: Expanded mode includes all sections
+
+When `options.expanded` is true, the rendered result SHALL include all available content: header, task prefix, full untruncated output via Markdown, full thinking text (unless `hideThinkingBlock` is true), and metrics footer.
+
+#### Scenario: Expanded result shows thinking inline and full output
+- **WHEN** `options.expanded` is true
+- **AND** thinking text is present in the result details
+- **THEN** the full thinking text is displayed inline between output paragraphs with `theme.fg("thinkingText", ...)` styling
+- **AND** the full untruncated output is displayed through Markdown
+- **AND** no "─── Thinking ───" or "─── Output ───" section dividers are present
+
+#### Scenario: Expanded result respects hideThinkingBlock
+- **WHEN** `options.expanded` is true
+- **AND** the user's `hideThinkingBlock` setting is true
+- **THEN** thinking content shows only the collapsed hint `▶ Thinking (N lines)`
+- **AND** the full thinking text is NOT displayed even in expanded mode
+
+## ADDED Requirements
 
 ### Requirement: renderShell: "self" escapes default Box frame
 
@@ -182,4 +154,3 @@ The metrics information SHALL be rendered as a single-line footer with space-sep
 #### Scenario: Metrics footer in partial view
 - **WHEN** `options.isPartial` is true
 - **THEN** the metrics footer shows current accumulated values (tool count, context %) with the same single-line format
-

@@ -22,7 +22,7 @@
  * Usage: pi -e extensions/spec-teams.ts
  */
 
-import { type ExtensionAPI, getMarkdownTheme, getAgentDir, parseArgs } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, getMarkdownTheme, getAgentDir, parseArgs, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Text, truncateToWidth, visibleWidth, Container, Markdown, Spacer } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
@@ -211,7 +211,7 @@ function formatMetricsFooter(details: any): string {
 		const shortModel = details.model.includes("/") ? details.model.split("/").pop() : details.model;
 		parts.push(`🤖 ${shortModel}`);
 	}
-	return parts.join("  ");
+	return parts.join(" · ");
 }
 
 // ── Frontmatter Parser ───────────────────────────
@@ -332,6 +332,7 @@ export default function (pi: ExtensionAPI) {
 	let sessionDir = "";
 	let contextWindow = 0;
 	let maxColumns = 3;
+	let hideThinkingBlockSetting = false;
 
 	// ── Refresh Status Helper ────────────────────────
 
@@ -545,7 +546,7 @@ export default function (pi: ExtensionAPI) {
 		task: string,
 		ctx: any,
 		onUpdate?: (update: any) => void,
-	): Promise<{ output: string; exitCode: number; elapsed: number; inputTokens: number; outputTokens: number; cost: number; toolCount: number; contextPct: number; thinkingText: string }> {
+	): Promise<{ output: string; exitCode: number; elapsed: number; inputTokens: number; outputTokens: number; cost: number; toolCount: number; contextPct: number; thinkingText: string; hideThinkingBlock: boolean }> {
 		const key = agentName.toLowerCase();
 		const state = agentStates.get(key);
 		if (!state) {
@@ -559,6 +560,7 @@ export default function (pi: ExtensionAPI) {
 				toolCount: 0,
 				contextPct: 0,
 				thinkingText: "",
+				hideThinkingBlock: hideThinkingBlockSetting,
 			});
 		}
 
@@ -573,6 +575,7 @@ export default function (pi: ExtensionAPI) {
 				toolCount: 0,
 				contextPct: 0,
 				thinkingText: "",
+				hideThinkingBlock: hideThinkingBlockSetting,
 			});
 		}
 
@@ -627,12 +630,12 @@ export default function (pi: ExtensionAPI) {
 		const textChunks: string[] = [];
 		const thinkingChunks: string[] = [];
 
-		// Throttled update helper — pushes live streaming state to onUpdate at most every 250ms
+		// Throttled update helper — pushes live streaming state to onUpdate at most every 50ms
 		let lastPush = 0;
 		const pushUpdate = () => {
 			if (!onUpdate) return;
 			const now = Date.now();
-			if (now - lastPush < 250) return;
+			if (now - lastPush < 50) return;
 			lastPush = now;
 			onUpdate({
 				content: [{ type: "text", text: `Dispatching to ${agentName}...` }],
@@ -759,6 +762,7 @@ export default function (pi: ExtensionAPI) {
 					toolCount: state.toolCount,
 					contextPct: state.contextPct,
 					thinkingText: thinkingChunks.join(""),
+					hideThinkingBlock: hideThinkingBlockSetting,
 				});
 			});
 
@@ -777,6 +781,7 @@ export default function (pi: ExtensionAPI) {
 					toolCount: state.toolCount,
 					contextPct: state.contextPct,
 					thinkingText: thinkingChunks.join(""),
+					hideThinkingBlock: hideThinkingBlockSetting,
 				});
 			});
 		});
@@ -812,6 +817,7 @@ export default function (pi: ExtensionAPI) {
 			agent: Type.String({ description: "Agent name (case-insensitive)" }),
 			task: Type.String({ description: "Task description for the agent to execute" }),
 		}),
+		renderShell: "self",
 
 		async execute(_toolCallId, params, _signal, onUpdate, ctx) {
 			const { agent, task } = params as { agent: string; task: string };
@@ -826,7 +832,7 @@ export default function (pi: ExtensionAPI) {
 				if (onUpdate) {
 					onUpdate({
 						content: [{ type: "text", text: `Dispatching to ${agent}...` }],
-						details: { agent, task, status: "dispatching" },
+						details: { agent, task, status: "dispatching", hideThinkingBlock: hideThinkingBlockSetting },
 					});
 				}
 
@@ -861,6 +867,7 @@ export default function (pi: ExtensionAPI) {
 						toolCount: result.toolCount,
 						contextPct: result.contextPct,
 						thinkingText: result.thinkingText,
+						hideThinkingBlock: hideThinkingBlockSetting,
 					},
 				};
 			} catch (err: any) {
@@ -868,7 +875,7 @@ export default function (pi: ExtensionAPI) {
 				refreshStatus();
 				return {
 					content: [{ type: "text", text: `Error dispatching to ${agent}: ${err?.message || err}` }],
-					details: { agent, task, status: "error", model: resolvedModel, elapsed: 0, exitCode: 1, fullOutput: "", inputTokens: 0, outputTokens: 0, cost: 0, toolCount: 0, contextPct: 0, thinkingText: "" },
+					details: { agent, task, status: "error", model: resolvedModel, elapsed: 0, exitCode: 1, fullOutput: "", inputTokens: 0, outputTokens: 0, cost: 0, toolCount: 0, contextPct: 0, thinkingText: "", hideThinkingBlock: hideThinkingBlockSetting },
 				};
 			}
 		},
@@ -899,6 +906,7 @@ export default function (pi: ExtensionAPI) {
 
 			const isPartial = options.isPartial || details.status === "dispatching";
 			const mdTheme = getMarkdownTheme();
+			const shouldHideThinking = details.hideThinkingBlock === true;
 
 			// ── Helper: build a signal-highlighted Text component for a signal line ──
 			const renderSignalLine = (signalName: string, line: string) => {
@@ -908,100 +916,49 @@ export default function (pi: ExtensionAPI) {
 				return new Text(theme.fg(color, theme.bold(line)), 0, 0);
 			};
 
-			// ── Streaming/partial result while agent is still running ──
-			if (isPartial) {
-				const container = new Container();
-				const dur = typeof details.elapsed === "number" ? formatDuration(details.elapsed) : "0s";
+			// ── Build layout: Container-based with flowing Pi-native structure ──
+			const container = new Container();
+			const dur = typeof details.elapsed === "number" ? formatDuration(details.elapsed) : "0s";
 
-				// Header: agent icon, name, elapsed
+			// Header: status icon, agent name, elapsed time
+			if (isPartial) {
 				container.addChild(new Text(
 					theme.fg("accent", `● ${details.agent || "?"}`) +
 					theme.fg("dim", ` ${dur}`),
 					0, 0,
 				));
-
-				// Task section (only if task present)
-				if (details.task) {
-					container.addChild(new Spacer(1));
-					container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
-					container.addChild(new Text(theme.fg("dim", details.task), 0, 0));
-				}
-
-				// Output section — render as Text (not Markdown) during streaming
-				if (details.outputText) {
-					container.addChild(new Spacer(1));
-					container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
-
-					// Scan for signals in streaming output
-					const signal = detectStatusSignal(details.outputText);
-					if (signal) {
-						// Split around signal for highlighting
-						const segments = splitOutputWithSignals(details.outputText);
-						for (const seg of segments) {
-							if (seg.type === "signal") {
-								container.addChild(renderSignalLine(seg.signalName!, seg.content));
-							} else if (seg.content.trim()) {
-								container.addChild(new Text(seg.content, 0, 0));
-							}
-						}
-					} else {
-						container.addChild(new Text(details.outputText, 0, 0));
-					}
-				}
-
-				// Thinking section — always collapsed hint during streaming
-				if (details.thinkingText) {
-					const thinkingLines = details.thinkingText.split("\n").length;
-					container.addChild(new Spacer(1));
-					container.addChild(new Text(theme.fg("muted", "─── Thinking ───"), 0, 0));
-					container.addChild(new Text(
-						theme.fg("dim", `▶ ${thinkingLines} line${thinkingLines !== 1 ? "s" : ""} — Ctrl+O to expand`),
-						0, 0,
-					));
-				}
-
-				// Metrics footer for streaming
-				container.addChild(new Spacer(1));
-				container.addChild(new Text(theme.fg("dim", formatMetricsFooter(details)), 0, 0));
-
-				return container;
+			} else {
+				const icon = details.status === "done" ? "✓" : "✗";
+				const color = details.status === "done" ? "success" : "error";
+				container.addChild(new Text(
+					theme.fg(color, `${icon} ${details.agent || "?"}`) +
+					theme.fg("dim", ` ${dur}`),
+					0, 0,
+				));
 			}
 
-			// ── Final result (done or error) ──
-			const container = new Container();
-			const icon = details.status === "done" ? "✓" : "✗";
-			const color = details.status === "done" ? "success" : "error";
-			const dur = typeof details.elapsed === "number" ? formatDuration(details.elapsed) : "0s";
-
-			// Header: status icon, agent name, elapsed time
-			container.addChild(new Text(
-				theme.fg(color, `${icon} ${details.agent || "?"}`) +
-				theme.fg("dim", ` ${dur}`),
-				0, 0,
-			));
-
-			// Task section (only if task present)
+			// Task prefix — dimmed text, no "─── Task ───" divider, only if task present
 			if (details.task) {
 				container.addChild(new Spacer(1));
-				container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
 				container.addChild(new Text(theme.fg("dim", details.task), 0, 0));
 			}
 
-			// Output section
-			if (details.fullOutput) {
+			// Output section — live Markdown (even during streaming), no "─── Output ───" divider
+			const outputSource = isPartial ? details.outputText : details.fullOutput;
+			if (outputSource) {
 				container.addChild(new Spacer(1));
-				container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
 
-				const output = options.expanded
-					? details.fullOutput
-					: (details.fullOutput.length > 4000
-						? details.fullOutput.slice(0, 4000) + "\n... [truncated]"
-						: details.fullOutput);
+				const output = isPartial
+					? outputSource
+					: (options.expanded
+						? outputSource
+						: (outputSource.length > 4000
+							? outputSource.slice(0, 4000) + "\n... [truncated]"
+							: outputSource));
 
 				// Scan for signals in output
 				const signal = detectStatusSignal(output);
 				if (signal) {
-					// Split around signal lines and render each segment
 					const segments = splitOutputWithSignals(output);
 					for (const seg of segments) {
 						if (seg.type === "signal") {
@@ -1015,26 +972,34 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 
-			// Thinking section
+			// Thinking section — inline between output and metrics, no "─── Thinking ───" divider
 			if (details.thinkingText) {
 				const thinkingLines = details.thinkingText.split("\n").length;
-				container.addChild(new Spacer(1));
-				container.addChild(new Text(theme.fg("muted", "─── Thinking ───"), 0, 0));
+				const showMore = thinkingLines > 50 ? ` (${thinkingLines} lines total)` : "";
 
-				if (options.expanded) {
-					// Full thinking text when expanded
-					container.addChild(new Text(theme.fg("dim", details.thinkingText), 0, 0));
-				} else {
-					// Collapsed hint
+				// In partial: always collapsed hint
+				// In final: depends on expanded and hideThinkingBlock
+				const showFull = !isPartial && options.expanded && !shouldHideThinking;
+
+				container.addChild(new Spacer(1));
+
+				if (showFull) {
+					// Full thinking text with Pi-native thinking theming (always full when expanded)
 					container.addChild(new Text(
-						theme.fg("dim", `▶ ${thinkingLines} line${thinkingLines !== 1 ? "s" : ""} — Ctrl+O to expand`),
+						theme.fg("thinkingText", details.thinkingText),
+						0, 0,
+					));
+				} else {
+					// Collapsed hint with Pi-native thinking theming
+					// Max-height guard: show total count if > 50 lines
+					container.addChild(new Text(
+						theme.fg("thinkingText", `▶ Thinking (${thinkingLines} line${thinkingLines !== 1 ? "s" : ""})${showMore}`),
 						0, 0,
 					));
 				}
 			}
 
-			// Metrics footer
-			container.addChild(new Spacer(1));
+			// Metrics footer — subtle single line, no preceding Spacer
 			container.addChild(new Text(theme.fg("dim", formatMetricsFooter(details)), 0, 0));
 
 			return container;
@@ -1380,6 +1345,7 @@ ${agentCatalog}`,
 		}
 		widgetCtx = _ctx;
 		contextWindow = _ctx.model?.contextWindow || 0;
+		hideThinkingBlockSetting = SettingsManager.create(_ctx.cwd, getAgentDir()).getHideThinkingBlock();
 
 		loadAgents(_ctx.cwd);
 
