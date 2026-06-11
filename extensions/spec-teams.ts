@@ -22,13 +22,70 @@
  * Usage: pi -e extensions/spec-teams.ts
  */
 
-import { type ExtensionAPI, getMarkdownTheme, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, getMarkdownTheme, getAgentDir, parseArgs } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Text, truncateToWidth, visibleWidth, Container, Markdown, Spacer } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
-import { readdirSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "fs";
+import { readdirSync, readFileSync, existsSync, mkdirSync, unlinkSync, realpathSync } from "fs";
 import { join, resolve } from "path";
+import { fileURLToPath } from "url";
 import { homedir } from "os";
+
+// ── Extension path parsing ──────────────────────
+
+// Parse -e/--extension paths from parent process CLI args at module init.
+// This captures explicitly-loaded extension paths once and stores them for
+// forwarding to sub-agent processes.
+const parsedArgs = parseArgs(process.argv.slice(2));
+const rawExtensionPaths: string[] = parsedArgs.extensions || [];
+
+// Helper: check if a path looks local (relative or absolute file path)
+function isLocalPath(p: string): boolean {
+	return p.startsWith("./") || p.startsWith("../") || p.startsWith("/");
+}
+
+// Resolve, normalize, and filter out the spec-teams extension itself.
+// If self-identification fails, forward all parsed paths without filtering.
+let forwardedExtensions: string[];
+try {
+	const selfPath = realpathSync(fileURLToPath(import.meta.url));
+	forwardedExtensions = rawExtensionPaths
+		.map((raw: string) => {
+			if (isLocalPath(raw)) {
+				// Resolve relative paths to absolute and normalize symlinks
+				return realpathSync(resolve(process.cwd(), raw));
+			}
+			// Package-name extensions (non-local) pass through unresolved
+			return raw;
+		})
+		.filter((resolved: string) => resolved !== selfPath);
+} catch {
+	// If import.meta.url or realpathSync throws, skip filtering and forward all
+	forwardedExtensions = [...rawExtensionPaths];
+}
+
+// ── Extension flag forwarding ──────────────────
+
+// Reconstruct unknown CLI flags for forwarding to sub-agents.
+// Only forward when --no-extensions is active (safe invariant: all unknown
+// flags came from explicitly-loaded -e extensions that are also forwarded).
+const forwardedFlags: string[] = (() => {
+	if (parsedArgs.noExtensions !== true) return [];
+	const flags: string[] = [];
+	if (parsedArgs.unknownFlags) {
+		for (const [flag, value] of parsedArgs.unknownFlags) {
+			if (typeof value === "string") {
+				flags.push(`--${flag}=${value}`);
+			} else if (value === true) {
+				flags.push(`--${flag}`);
+			}
+		}
+	}
+	if (flags.length > 0) {
+		console.log(`[spec-teams] Forwarding extension flags to sub-agents: ${flags.join(" ")}`);
+	}
+	return flags;
+})();
 
 // ── Types ────────────────────────────────────────
 
@@ -482,6 +539,10 @@ export default function (pi: ExtensionAPI) {
 			"--mode", "json",
 			"-p",
 			"--no-extensions",
+			// Forward parent -e extension paths (filtered to exclude spec-teams itself)
+			...forwardedExtensions.flatMap((ext: string) => ["-e", ext]),
+			// Forward extension-registered CLI flags (only populated when --no-extensions is active)
+			...forwardedFlags,
 			"--model", model,
 			"--tools", state.def.tools,
 			"--thinking", state.def.thinking,
