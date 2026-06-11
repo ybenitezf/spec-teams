@@ -1,13 +1,13 @@
 ## MODIFIED Requirements
 
-### Requirement: renderResult uses Container-based layout with section dividers
+### Requirement: renderResult uses Container-based layout with Box wrapper
 
-The `renderResult` function SHALL escape the default Box frame by using `renderShell: "self"` on the tool definition. The result SHALL be rendered as a flowing, Pi-native layout without explicit "─── Section ───" dividers. The layout SHALL consist of: a subtle agent label header (status icon, agent name, elapsed time), the task rendered as dimmed Markdown prefix, the output and thinking rendered interleaved in stream order (each as flowing Markdown), and a subtle single-line metrics footer.
+The `renderResult` function SHALL escape the default Box frame by using `renderShell: "self"` on the tool definition. The result SHALL be rendered as a `Container` wrapped in an explicit `Box(2, 1, theme.bg("customMessageBg"))`, providing 2 cells of horizontal padding, 1 cell vertical padding, and a subtle `customMessageBg` background tint. The Container layout SHALL consist of: a subtle agent label header (status icon, agent name, elapsed time), the task rendered as dimmed Markdown prefix, the output and thinking rendered interleaved in stream order (each as flowing Markdown), and a subtle single-line metrics footer.
 
 #### Scenario: Single-agent final result with all content
 - **WHEN** `renderResult` is called with a done result containing task, output, thinking, and metrics
 - **AND** `options.expanded` is true
-- **THEN** the rendered output is a `Container` (self-rendered, no Box frame) containing in order:
+- **THEN** the rendered output is a `Box(2, 1, theme.bg("customMessageBg"))` wrapping a `Container` containing in order:
   - A header `Text` with status icon, agent name, and elapsed time (themed subtle/accent)
   - A `Markdown` component with the task text as dimmed prefix (no "─── Task ───" divider)
   - Interleaved output and thinking segments rendered in stream order, each as `Markdown`:
@@ -21,11 +21,15 @@ The `renderResult` function SHALL escape the default Box frame by using `renderS
 - **AND** when there are no content segments
 - **THEN** the content area is not included
 
-#### Scenario: No Box frame visible
+#### Scenario: Box wrapper provides padding and background
 - **WHEN** the `dispatch_agent` tool definition sets `renderShell: "self"`
 - **AND** `renderResult` renders the result
-- **THEN** no default Pi Box background, border, or padding wraps the rendered output
-- **AND** the rendered content appears visually integrated with the surrounding conversation
+- **THEN** the rendered output is wrapped in an explicit `Box(2, 1, theme.bg("customMessageBg"))`
+- **AND** content is indented 2 cells from each terminal edge (4 cells total width reduction)
+- **AND** content has 1 cell of vertical padding above and below
+- **AND** a subtle `customMessageBg` background tint spans the full terminal width behind the widget
+- **AND** both loading (partial) and final (done/error) states receive identical Box wrapping
+- **AND** no default Pi Box (with border, toolPendingBg/toolSuccessBg/toolErrorBg) wraps the rendered output
 
 ### Requirement: Output text is rendered through Markdown component
 
@@ -60,17 +64,41 @@ The `renderCall` function SHALL display the agent name, optional model informati
 
 ### Requirement: truncation marker for collapsed final output
 
-When `options.expanded` is false, output text SHALL be truncated to 4000 characters with a `... [truncated]` marker appended. When `options.expanded` is true, the full untruncated output SHALL be shown through the Markdown component.
+When `options.expanded` is false, text content SHALL be truncated to 4000 cumulative characters across interleaved text segments, with a `\n... [truncated]` marker appended to the last rendered text segment. Thinking segments SHALL NOT count toward the 4000-character limit. When a text segment would exceed the remaining character allowance, it SHALL be sliced to fit and no further segments (text or thinking) SHALL be rendered. When `options.expanded` is true, the full untruncated interleaved output SHALL be shown.
 
-#### Scenario: Collapsed output exceeds 4000 characters
+#### Scenario: Collapsed text exceeds 4000 characters across interleaved segments
 - **WHEN** `options.expanded` is false
-- **AND** content segments collectively exceed 4000 characters
-- **THEN** the rendered output is truncated to 4000 characters with `... [truncated]` appended
-- **AND** the truncated text is passed to the Markdown component
+- **AND** `orderedContent` contains two text segments of 2500 characters each, with a thinking segment between them
+- **THEN** the first text segment (2500 chars) is rendered via Markdown
+- **AND** the thinking segment is rendered via Markdown with thinkingText color + italic (not counted toward limit)
+- **AND** the second text segment is truncated to 1500 characters (4000 - 2500 remaining)
+- **AND** `\n... [truncated]` is appended to the truncated second segment
+- **AND** no further segments after the truncation point are rendered
 
-#### Scenario: Expanded output shows full content
+#### Scenario: Collapsed text under 4000 characters shows full interleaved content
+- **WHEN** `options.expanded` is false
+- **AND** cumulative text characters across all segments total 3000
+- **THEN** all text and thinking segments are rendered interleaved in stream order
+- **AND** no truncation marker is appended
+- **AND** the output is structurally identical to the live/expanded rendering (same segment order, same spacers)
+
+#### Scenario: Truncation occurs mid-segment in a text block
+- **WHEN** `options.expanded` is false
+- **AND** the first text segment contains 4200 characters
+- **THEN** the segment is rendered as Markdown with only the first 4000 characters
+- **AND** `\n... [truncated]` is appended
+- **AND** no subsequent segments (text or thinking) are rendered
+
+#### Scenario: Only thinking segments after truncation cutoff
+- **WHEN** `options.expanded` is false
+- **AND** the last text segment reaches the 4000-char limit, causing truncation
+- **AND** a thinking segment follows the truncated text segment
+- **THEN** the thinking segment is NOT rendered (no orphan thinking after text truncation)
+
+#### Scenario: Expanded output shows full untruncated content
 - **WHEN** `options.expanded` is true
-- **THEN** the full content is passed to the Markdown component without truncation
+- **THEN** the full interleaved content is rendered without truncation
+- **AND** all text and thinking segments are displayed in stream order regardless of character count
 
 ### Requirement: Expanded mode includes all sections
 
@@ -116,16 +144,17 @@ When `options.isPartial` is true, `renderResult` SHALL render a Container with: 
 
 ### Requirement: renderShell: "self" escapes default Box frame
 
-The `dispatch_agent` tool definition SHALL set `renderShell: "self"` to escape Pi's default Box frame (background, padding, border). The `renderResult` function SHALL provide its own visual framing.
+The `dispatch_agent` tool definition SHALL set `renderShell: "self"` to escape Pi's default Box frame (background, padding, border). The `renderResult` function SHALL provide its own visual framing via an explicit `Box(2, 1, theme.bg("customMessageBg"))`.
 
 #### Scenario: Tool definition has renderShell self
 - **WHEN** the `dispatch_agent` tool is registered with the Pi extension API
 - **THEN** its definition includes `renderShell: "self"`
-- **AND** the default Pi Box (with background and padding) does NOT wrap the rendered result
+- **AND** the default Pi Box (with border and state-dependent background colors) does NOT wrap the rendered result
+- **AND** the explicit custom Box wrapper (with customMessageBg background and 2-cell horizontal padding) IS applied
 
 #### Scenario: Other modes unaffected
 - **WHEN** a Pi session is running in JSON, RPC, or Print mode
-- **THEN** the `renderShell: "self"` setting has no effect on the output format
+- **THEN** the `renderShell: "self"` setting and the explicit Box wrapper have no effect on the output format
 - **AND** the tool result content is delivered in the mode's native format
 
 ### Requirement: Task renders as dimmed Markdown prefix without section divider

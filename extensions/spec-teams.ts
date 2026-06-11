@@ -24,7 +24,7 @@
 
 import { type ExtensionAPI, getMarkdownTheme, getAgentDir, parseArgs, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { Text, truncateToWidth, visibleWidth, Container, Markdown, Spacer } from "@earendil-works/pi-tui";
+import { Box, Text, truncateToWidth, visibleWidth, Container, Markdown, Spacer } from "@earendil-works/pi-tui";
 import { spawn } from "child_process";
 import { readdirSync, readFileSync, existsSync, mkdirSync, unlinkSync, realpathSync } from "fs";
 import { join, resolve } from "path";
@@ -654,6 +654,7 @@ export default function (pi: ExtensionAPI) {
 					inputTokens: state.inputTokens,
 					outputTokens: state.outputTokens,
 					cost: state.cost,
+					hideThinkingBlock: hideThinkingBlockSetting,
 				},
 			});
 		};
@@ -1039,54 +1040,79 @@ export default function (pi: ExtensionAPI) {
 						}
 					}
 				} else {
-					// ── Collapsed mode: concatenated text, no interleaving ──
-					const truncated = allText.length > 4000
-						? allText.slice(0, 4000) + "\n... [truncated]"
-						: allText;
+					// ── Collapsed mode: interleaved rendering with per-segment truncation ──
+					const MAX_CHARS = 4000;
+					let charsRendered = 0;
+					let prevType: string | null = null;
 
-					if (signal) {
-						const segments = splitOutputWithSignals(truncated);
-						for (const seg of segments) {
-							if (seg.type === "signal") {
-								container.addChild(renderSignalLine(seg.signalName!, seg.content));
-							} else if (seg.content.trim()) {
-								container.addChild(new Markdown(seg.content, 0, 0, mdTheme));
+					for (const segment of orderedContent) {
+						if (segment.type === "thinking") {
+							if (shouldHideThinking) continue;
+							if (!segment.content.trim()) continue;
+							if (prevType !== null && segment.type !== prevType) {
+								container.addChild(new Spacer(1));
+							}
+							prevType = segment.type;
+							container.addChild(new Markdown(segment.content, 0, 0, mdTheme, {
+								color: (text) => theme.fg("thinkingText", text),
+								italic: true,
+							}));
+						} else {
+							if (!segment.content.trim()) continue;
+							if (prevType !== null && segment.type !== prevType) {
+								container.addChild(new Spacer(1));
+							}
+							prevType = segment.type;
+							const segmentLen = segment.content.length;
+							if (charsRendered + segmentLen <= MAX_CHARS) {
+								const segs = splitOutputWithSignals(segment.content);
+								for (const seg of segs) {
+									if (seg.type === "signal") {
+										container.addChild(renderSignalLine(seg.signalName!, seg.content));
+									} else if (seg.content.trim()) {
+										container.addChild(new Markdown(seg.content, 0, 0, mdTheme));
+									}
+								}
+								charsRendered += segmentLen;
+							} else {
+								const remaining = MAX_CHARS - charsRendered;
+								if (remaining > 0) {
+									const sliced = segment.content.slice(0, remaining) + "\n... [truncated]";
+									const segs = splitOutputWithSignals(sliced);
+									for (const seg of segs) {
+										if (seg.type === "signal") {
+											container.addChild(renderSignalLine(seg.signalName!, seg.content));
+										} else if (seg.content.trim()) {
+											container.addChild(new Markdown(seg.content, 0, 0, mdTheme));
+										}
+									}
+								}
+								break;
 							}
 						}
-					} else {
-						container.addChild(new Markdown(truncated, 0, 0, mdTheme));
 					}
 				}
 			}
 
-			// ── Post-text thinking section (collapsed hint or collapsed-mode full thinking) ──
+			// ── Post-text thinking section (collapsed hint only; thinking is now inline) ──
 			const hasThinking = orderedContent.some((s: any) => s.type === "thinking" && s.content.trim());
-			if (hasThinking && (shouldHideThinking || (!isPartial && !options.expanded))) {
+			if (hasThinking && shouldHideThinking) {
 				container.addChild(new Spacer(1));
-				if (shouldHideThinking) {
-					// Collapsed hint — Text, not Markdown (control element)
-					const showMore = totalThinkingLines > 50 ? ` (${totalThinkingLines} lines total)` : "";
-					container.addChild(new Text(
-						theme.fg("thinkingText", `▶ Thinking (${totalThinkingLines} line${totalThinkingLines !== 1 ? "s" : ""})${showMore}`),
-						0, 0,
-					));
-				} else {
-					// Collapsed mode, full thinking — single Markdown block with thinkingText color + italic
-					const allThinking = orderedContent
-						.filter((s: any) => s.type === "thinking")
-						.map((s: any) => s.content)
-						.join("");
-					container.addChild(new Markdown(allThinking, 0, 0, mdTheme, {
-						color: (text) => theme.fg("thinkingText", text),
-						italic: true,
-					}));
-				}
+				const showMore = totalThinkingLines > 50 ? ` (${totalThinkingLines} lines total)` : "";
+				container.addChild(new Text(
+					theme.fg("thinkingText", `▶ Thinking (${totalThinkingLines} line${totalThinkingLines !== 1 ? "s" : ""})${showMore}`),
+					0, 0,
+				));
 			}
 
-			// Metrics footer — subtle single line, no preceding Spacer
+			// Metrics footer — subtle single line with blank line separator
+			container.addChild(new Spacer(1));
 			container.addChild(new Text(theme.fg("dim", formatMetricsFooter(details)), 0, 0));
 
-			return container;
+			// Wrap the entire container in a Box for 2-cell horizontal padding and customMessageBg background
+			const box = new Box(2, 1, (t: string) => theme.bg("customMessageBg", t));
+			box.addChild(container);
+			return box;
 		},
 	});
 
