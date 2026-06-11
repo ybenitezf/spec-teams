@@ -1,25 +1,34 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Footer renders single-line metrics with team name
 
-The spec-teams extension footer SHALL render a single line combining aggregate usage metrics (using the `formatMetricsFooter()` format) suffixed with the active team name. The footer SHALL produce exactly 1 line.
+The spec-teams extension SHALL publish aggregate usage metrics and active team name onto the default footer's extension statuses line via `setStatus("spec-team", ...)`. It SHALL NOT replace the default footer via `setFooter`. The status line SHALL be a single string combining a styled prefix, the `formatMetricsFooter()` output, and the active team name suffix.
 
-#### Scenario: Footer with active team and usage
+#### Scenario: Status line with active team and usage
 - **WHEN** the extension is loaded in TUI mode with an active team
 - **AND** the dispatcher has consumed tokens through its own LLM calls
 - **AND** subagents have accumulated usage through dispatch runs
-- **THEN** the footer renders 1 line:
-  - `🔧 N calls  ↑inputs  ↓outputs  $cost  ctx M%  🤖 short-model · teamName`
+- **THEN** `setStatus` is called with key `"spec-team"` and a value containing:
+  - A styled prefix (ANSI-formatted, including an emoji and the team label)
+  - Metrics from `formatMetricsFooter()`: `🔧 N calls  ↑inputs  ↓outputs  $cost  ctx M%  🤖 short-model`
+  - Suffix: `· <activeTeamName>`
+- **AND** the value is a single string (no newlines)
 
-#### Scenario: Footer when no subagents have run
+#### Scenario: Status line coexists with other extensions
+- **WHEN** the extension calls `setStatus("spec-team", ...)`
+- **AND** another extension calls `setStatus("other-ext", ...)`
+- **THEN** the default footer's line 3 renders both statuses space-separated
+- **AND** the default footer's lines 1-2 (PWD, git branch, session name, token stats, model) remain visible
+
+#### Scenario: Status line when no subagents have run
 - **WHEN** no subagents have been dispatched yet (all `agentStates` entries have `toolCount === 0`)
 - **AND** the dispatcher has made some LLM calls
-- **THEN** the metrics line shows combined dispatcher-only totals
+- **THEN** the status line shows combined dispatcher-only totals
 - **AND** the tool call count includes at least the dispatcher's dispatch_agent calls if any
 
-#### Scenario: Footer with zero usage across all sources
+#### Scenario: Status line with zero usage across all sources
 - **WHEN** no dispatcher LLM calls have been made and no subagents have run
-- **THEN** the metrics line shows `🔧 0 calls  $0  ctx N%  🤖 short-model`
+- **THEN** the status line shows `🔧 0 calls  $0  ctx N%  🤖 short-model` (with styled prefix and team name suffix)
 
 ### Requirement: Aggregate token and cost computation
 
@@ -81,15 +90,65 @@ The metrics line SHALL display the active model using the short form (last segme
 - **WHEN** `_ctx.model?.id` is `undefined` or falsy
 - **THEN** the metrics line does NOT include a `🤖` segment
 
-### Requirement: Footer line respects terminal width
+## ADDED Requirements
 
-The footer line SHALL be truncated to the terminal width using `truncateToWidth()`. The full string (`formatMetricsFooter(details) · teamName`) SHALL be built first, then truncated to the terminal width.
+### Requirement: Status line includes styled prefix
+
+The status string SHALL include a styled prefix before the metrics. The prefix SHALL use ANSI escape codes for visual formatting and SHALL be terminated with an ANSI reset before the metrics portion. The prefix SHALL include a team-related emoji and the text `"spec-team"`.
+
+#### Scenario: Styled prefix with ANSI formatting
+- **WHEN** the status line is built
+- **THEN** the prefix is formatted with ANSI bold and color codes (e.g., `\x1b[1m\x1b[36m👥 spec-team\x1b[0m`)
+- **AND** the ANSI reset (`\x1b[0m`) immediately follows the prefix text
+- **AND** no ANSI codes leak into the metrics portion
+
+#### Scenario: ANSI codes have zero visible width
+- **WHEN** the status string contains ANSI escape codes
+- **THEN** the default footer's visible-width calculation ignores them
+- **AND** truncation is based on visible characters only
+
+### Requirement: Status refreshes at key update points
+
+The extension SHALL refresh the `setStatus` value at discrete points where aggregate metrics change. A private `refreshStatus()` helper SHALL build and publish the status string from current state.
+
+#### Scenario: Refresh on session start
+- **WHEN** the `session_start` event fires
+- **THEN** `refreshStatus()` is called, publishing the initial metrics status line
+
+#### Scenario: Refresh on team switch
+- **WHEN** the user switches to a different team via the `/specs-team` command
+- **THEN** `refreshStatus()` is called, publishing metrics with the new team name in the suffix
+
+#### Scenario: Refresh after dispatch completion
+- **WHEN** a `dispatch_agent` call completes (subagent finishes)
+- **AND** the subagent's `inputTokens`, `outputTokens`, `cost`, and `toolCount` are recorded in `agentStates`
+- **THEN** `refreshStatus()` is called, reflecting the updated aggregate totals
+
+#### Scenario: Refresh after dispatcher LLM completion
+- **WHEN** the dispatcher's LLM call completes (producing assistant messages with usage data)
+- **THEN** `refreshStatus()` is called, reflecting updated dispatcher token/cost totals
+
+### Requirement: No setFooter call
+
+The extension SHALL NOT call `_ctx.ui.setFooter()` (or `pi.ui.setFooter()`). The default pi-agent footer SHALL remain intact and unmodified.
+
+#### Scenario: Default footer structure preserved
+- **WHEN** the spec-teams extension is loaded in TUI mode
+- **THEN** the default footer renders its standard three lines:
+  - Line 1: PWD and git branch
+  - Line 2: Session name, token count, model
+  - Line 3: All extension statuses (including spec-team)
+- **AND** no custom footer component is active from spec-teams
+
+### Requirement: Status line respects terminal width
+
+The status string passed to `setStatus` SHALL NOT be pre-truncated by the spec-teams extension. Terminal-width truncation SHALL be handled by the default footer's status line renderer. The extension SHALL build the full status string and pass it as-is to `setStatus`.
 
 #### Scenario: Narrow terminal
 - **WHEN** the terminal width is 40 columns
-- **THEN** the footer line is truncated to 40 characters without wrapping
-- **AND** no line-width exceptions are thrown
+- **THEN** the default footer truncates the status line appropriately
+- **AND** no line-width exceptions are thrown by the extension
 
 #### Scenario: Wide terminal
 - **WHEN** the terminal width is 120 columns
-- **THEN** the footer line renders fully without truncation
+- **THEN** the full status line renders without truncation
