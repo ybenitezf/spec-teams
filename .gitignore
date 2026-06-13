@@ -11,3 +11,7 @@ __pycache__/
 .pi/agent-sessions/
 
 tmp/
+
+# OpenSpec internal artifacts
+openspec-research.md
+openspec/archive/

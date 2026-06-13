@@ -4,7 +4,6 @@ openspec:
   - apply
   - verify
   - archive
-  - worker
 
 full:
   - explore
