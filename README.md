@@ -179,7 +179,15 @@ To add a custom agent, place its `.md` file in any of these directories. Project
 
 ### Team Configuration (`teams.yaml`)
 
-After creating an agent, add it to a team in `agents/teams.yaml`:
+After creating an agent, add it to a team in `teams.yaml`. The file is discovered across multiple directories using first-seen-wins priority:
+
+1. `<cwd>/agents/teams.yaml`
+2. `<cwd>/.claude/agents/teams.yaml`
+3. `<cwd>/.pi/agents/teams.yaml`
+4. `<getAgentDir()>/agents/teams.yaml` (user-level, typically `~/.pi/agent/agents/teams.yaml`)
+5. `~/.agents/agents/teams.yaml` (user-level)
+
+The first `teams.yaml` found wins — project-level files shadow user-level ones.
 
 ```yaml
 openspec:
@@ -275,7 +283,8 @@ If you want to use spec-teams in another project without cloning this repo separ
 1. **Ensure OpenSpec is initialized** — Run `openspec init` in your project if it isn't already configured. This creates the `.pi/skills/` and `.pi/prompts/` directories that Spec Teams depends on.
 2. **Copy or link the extension files** — You only need two things from this repository:
    - `extensions/` — The spec-teams extension entry point
-   - `agents/` — Agent definitions and `teams.yaml` configuration
+   - `agents/` — Agent definitions (place in any of the discovery directories)
+3. **Place `teams.yaml` in a discovery directory** — The teams configuration file follows the same multi-directory discovery as agent `.md` files. Place it alongside your agents in any of the 5 scan directories (see Team Configuration section above).
 3. **Load the extension** — Point Pi at the extension file:
    ```bash
    pi -e ./path/to/spec-teams-extension/extensions/spec-teams.ts

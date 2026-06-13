@@ -76,6 +76,8 @@ import {
   renderAgentCell,
   isLocalPath,
   scanAgentDirs,
+  getAgentDirs,
+  findTeamsYaml,
   buildOpenSpecPhases,
   EXPLORE_SIGNALS,
   buildRulesSegment,
@@ -1107,5 +1109,163 @@ describe('buildRulesSegment', () => {
     // Count bullet points (lines starting with "- ")
     const bulletCount = (rules.match(/^- /gm) || []).length;
     expect(bulletCount).toBe(6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('getAgentDirs', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns 5 directories in correct order', () => {
+    mockHomedir.mockReturnValue('/home/user');
+    mockGetAgentDir.mockReturnValue('/home/user/.pi/agent');
+    const cwd = '/project';
+
+    const dirs = getAgentDirs(cwd);
+
+    expect(dirs).toHaveLength(5);
+    expect(dirs[0]).toBe('/project/agents');
+    expect(dirs[1]).toBe('/project/.claude/agents');
+    expect(dirs[2]).toBe('/project/.pi/agents');
+    expect(dirs[3]).toBe('/home/user/.pi/agent/agents');
+    expect(dirs[4]).toBe('/home/user/.agents/agents');
+  });
+
+  it('respects PI_CODING_AGENT_DIR via getAgentDir()', () => {
+    mockHomedir.mockReturnValue('/home/user');
+    mockGetAgentDir.mockReturnValue('/custom/pi/config');
+    const cwd = '/project';
+
+    const dirs = getAgentDirs(cwd);
+
+    expect(dirs[3]).toBe('/custom/pi/config/agents');
+  });
+
+  it('uses different cwd for project-level dirs', () => {
+    mockHomedir.mockReturnValue('/home/user');
+    mockGetAgentDir.mockReturnValue('/home/user/.pi/agent');
+    const cwd = '/different/path';
+
+    const dirs = getAgentDirs(cwd);
+
+    expect(dirs[0]).toBe('/different/path/agents');
+    expect(dirs[1]).toBe('/different/path/.claude/agents');
+    expect(dirs[2]).toBe('/different/path/.pi/agents');
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('findTeamsYaml', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockExistsSync.mockReturnValue(false);
+  });
+
+  it('returns null when no teams.yaml exists', () => {
+    mockHomedir.mockReturnValue('/home/user');
+    mockGetAgentDir.mockReturnValue('/home/user/.pi/agent');
+
+    const result = findTeamsYaml('/project');
+
+    expect(result).toBeNull();
+  });
+
+  it('returns first directory that has teams.yaml (project agents/)', () => {
+    mockHomedir.mockReturnValue('/home/user');
+    mockGetAgentDir.mockReturnValue('/home/user/.pi/agent');
+    // Only first directory exists
+    mockExistsSync.mockImplementation((p: string) => p === '/project/agents/teams.yaml');
+
+    const result = findTeamsYaml('/project');
+
+    expect(result).toBe('/project/agents/teams.yaml');
+  });
+
+  it('returns .pi/agents/teams.yaml when agents/ does not have it', () => {
+    mockHomedir.mockReturnValue('/home/user');
+    mockGetAgentDir.mockReturnValue('/home/user/.pi/agent');
+    mockExistsSync.mockImplementation(
+      (p: string) => p === '/project/.pi/agents/teams.yaml',
+    );
+
+    const result = findTeamsYaml('/project');
+
+    expect(result).toBe('/project/.pi/agents/teams.yaml');
+  });
+
+  it('project-level teams.yaml shadows user-level', () => {
+    mockHomedir.mockReturnValue('/home/user');
+    mockGetAgentDir.mockReturnValue('/home/user/.pi/agent');
+    // Both project and user level exist
+    mockExistsSync.mockImplementation(
+      (p: string) =>
+        p === '/project/.pi/agents/teams.yaml' ||
+        p === '/home/user/.pi/agent/agents/teams.yaml',
+    );
+
+    const result = findTeamsYaml('/project');
+
+    // Should return project-level (directory #3)
+    expect(result).toBe('/project/.pi/agents/teams.yaml');
+  });
+
+  it('user-level teams.yaml found when no project-level exists', () => {
+    mockHomedir.mockReturnValue('/home/user');
+    mockGetAgentDir.mockReturnValue('/home/user/.pi/agent');
+    mockExistsSync.mockImplementation(
+      (p: string) => p === '/home/user/.pi/agent/agents/teams.yaml',
+    );
+
+    const result = findTeamsYaml('/project');
+
+    expect(result).toBe('/home/user/.pi/agent/agents/teams.yaml');
+  });
+
+  it('.agents user directory checked after .pi/agent', () => {
+    mockHomedir.mockReturnValue('/home/user');
+    mockGetAgentDir.mockReturnValue('/home/user/.pi/agent');
+    mockExistsSync.mockImplementation(
+      (p: string) => p === '/home/user/.agents/agents/teams.yaml',
+    );
+
+    const result = findTeamsYaml('/project');
+
+    expect(result).toBe('/home/user/.agents/agents/teams.yaml');
+  });
+
+  it('respects PI_CODING_AGENT_DIR env var', () => {
+    mockHomedir.mockReturnValue('/home/user');
+    mockGetAgentDir.mockReturnValue('/custom/pi/config');
+    mockExistsSync.mockImplementation(
+      (p: string) => p === '/custom/pi/config/agents/teams.yaml',
+    );
+
+    const result = findTeamsYaml('/project');
+
+    expect(result).toBe('/custom/pi/config/agents/teams.yaml');
+  });
+
+  it('missing directories are skipped without error', () => {
+    mockHomedir.mockReturnValue('/home/user');
+    mockGetAgentDir.mockReturnValue('/home/user/.pi/agent');
+    // No files exist, all existsSync calls return false
+    mockExistsSync.mockReturnValue(false);
+
+    const result = findTeamsYaml('/project');
+
+    expect(result).toBeNull();
+  });
+
+  it('returns resolved path', () => {
+    mockHomedir.mockReturnValue('/home/user');
+    mockGetAgentDir.mockReturnValue('/home/user/.pi/agent');
+    mockExistsSync.mockImplementation((p: string) => p === '/project/agents/teams.yaml');
+    mockResolve.mockReturnValue('/resolved/project/agents/teams.yaml');
+
+    const result = findTeamsYaml('/project');
+
+    expect(result).toBe('/resolved/project/agents/teams.yaml');
   });
 });

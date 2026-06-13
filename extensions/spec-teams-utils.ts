@@ -345,6 +345,29 @@ export function parseAgentFile(filePath: string): AgentDef | null {
 	}
 }
 
+// ── getAgentDirs ───────────────────────────────
+
+/**
+ * Returns the 5-directory scan array used for both agent discovery and teams.yaml discovery.
+ *
+ * Scan order (project-first precedence on name collisions):
+ *   1. <cwd>/agents/
+ *   2. <cwd>/.claude/agents/
+ *   3. <cwd>/.pi/agents/
+ *   4. <getAgentDir()>/agents/        (~/.pi/agent/agents/ by default)
+ *   5. <homedir()>/.agents/agents/
+ */
+export function getAgentDirs(cwd: string): string[] {
+	return [
+		join(cwd, "agents"),
+		join(cwd, ".claude", "agents"),
+		join(cwd, ".pi", "agents"),
+		// User-level directories (scanned after project dirs so project wins collisions)
+		join(getAgentDir(), "agents"),
+		join(homedir(), ".agents", "agents"),
+	];
+}
+
 // ── scanAgentDirs ────────────────────────────────
 
 /**
@@ -359,16 +382,11 @@ export function parseAgentFile(filePath: string): AgentDef | null {
  *
  * When two agents share the same name (case-insensitive), the first one found
  * (project-level) wins and the later (user-level) is silently ignored.
+ *
+ * Note: teams.yaml discovery uses the same directory list via findTeamsYaml().
  */
 export function scanAgentDirs(cwd: string): AgentDef[] {
-	const dirs = [
-		join(cwd, "agents"),
-		join(cwd, ".claude", "agents"),
-		join(cwd, ".pi", "agents"),
-		// User-level directories (scanned after project dirs so project wins collisions)
-		join(getAgentDir(), "agents"),
-		join(homedir(), ".agents", "agents"),
-	];
+	const dirs = getAgentDirs(cwd);
 
 	const agents: AgentDef[] = [];
 	const seen = new Set<string>();
@@ -389,6 +407,27 @@ export function scanAgentDirs(cwd: string): AgentDef[] {
 	}
 
 	return agents;
+}
+
+// ── findTeamsYaml ───────────────────────────────
+
+/**
+ * Scan the same 5 directories as scanAgentDirs() for a teams.yaml file.
+ *
+ * Returns the full path to the first teams.yaml found, or null if none exists.
+ * Project-level directories take precedence over user-level directories (first-seen-wins).
+ */
+export function findTeamsYaml(cwd: string): string | null {
+	const dirs = getAgentDirs(cwd);
+
+	for (const dir of dirs) {
+		const filePath = join(dir, "teams.yaml");
+		if (existsSync(filePath)) {
+			return resolve(filePath);
+		}
+	}
+
+	return null;
 }
 
 // ── System Prompt Segment Builders ─────────────

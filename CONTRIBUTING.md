@@ -60,7 +60,7 @@ You are a specialist agent focused on...
 
 | Field | Description | Example |
 |---|---|---|
-| `name` | Agent identifier (used in teams.yaml) | `explore` |
+| `name` | Agent identifier (used in teams.yaml, discovered across multiple directories) | `explore` |
 | `description` | Short description of the agent's role | `Investigates problems and clarifies requirements` |
 | `tools` | Comma-separated list of allowed tools | `read, write, bash, grep` |
 | `thinking` | Reasoning depth: `low`, `medium`, `high` | `high` |
@@ -100,7 +100,7 @@ Examples:
 
 - `extensions/spec-teams.ts` — Main extension entry point
 - `agents/*.md` — Agent definitions (frontmatter + system prompt)
-- `agents/teams.yaml` — Team composition configuration
+- `agents/teams.yaml` — Team composition configuration (discovered across multiple directories, see README)
 - `.pi/skills/` — OpenSpec skill procedures
 - `.pi/prompts/` — OpenSpec lifecycle prompts
 

@@ -15,8 +15,10 @@
  *
  * Loads agent definitions from project-level (agents/*.md, .claude/agents/*.md, .pi/agents/*.md)
  * and user-level (<getAgentDir()>/agents/, ~/.agents/agents/) directories.
- * Teams are defined in .pi/agents/teams.yaml — on boot a select dialog lets
- * you pick which team to work with. Only team members are available for dispatch.
+ * Teams are defined in teams.yaml files discovered across multiple directories
+ * (same locations as agent discovery, first-seen-wins priority).
+ * On boot a select dialog lets you pick which team to work with.
+ * Only team members are available for dispatch.
  *
  * Commands:
  *   /specs-team           — switch active team
@@ -30,7 +32,7 @@ import { type ExtensionAPI, getMarkdownTheme, getAgentDir, parseArgs, SettingsMa
 import {
 	isLocalPath, displayName, encodeCwd, parseTeamsYaml, formatDuration, formatTokens,
 	detectStatusSignal, formatMetricsFooter, splitOutputWithSignals, computeColumns,
-	renderAgentCell, parseAgentFile, scanAgentDirs, type AgentDef, type AgentState,
+	renderAgentCell, parseAgentFile, scanAgentDirs, findTeamsYaml, type AgentDef, type AgentState,
 	buildOpenSpecPhases, buildIdentitySegment, buildTeamConfigSegment,
 	buildLifecycleSegment, buildExploreRelaySegment, buildGeneralTasksSegment,
 	buildRulesSegment, buildAgentCatalogSegment, type PhaseAvailability,
@@ -110,6 +112,7 @@ export default function (pi: ExtensionAPI) {
 	let contextWindow = 0;
 	let maxColumns = 3;
 	let hideThinkingBlockSetting = false;
+	let discoveredTeamsPath: string | null = null;
 
 	// ── Refresh Status Helper ────────────────────────
 
@@ -188,11 +191,11 @@ export default function (pi: ExtensionAPI) {
 		// Load all agent definitions
 		allAgentDefs = scanAgentDirs(cwd);
 
-		// Load teams from .pi/agents/teams.yaml
-		const teamsPath = join(cwd, ".pi", "agents", "teams.yaml");
-		if (existsSync(teamsPath)) {
+		// Load teams using multi-directory discovery
+		discoveredTeamsPath = findTeamsYaml(cwd);
+		if (discoveredTeamsPath) {
 			try {
-				teams = parseTeamsYaml(readFileSync(teamsPath, "utf-8"));
+				teams = parseTeamsYaml(readFileSync(discoveredTeamsPath, "utf-8"));
 			} catch {
 				teams = {};
 			}
@@ -242,13 +245,13 @@ export default function (pi: ExtensionAPI) {
 			return {
 				render(width: number): string[] {
 					if (agentStates.size === 0) {
-						return [theme.fg("dim", "No agents found. Add .md files to agents/ or user-level agent dirs")];
+						return ["", theme.fg("dim", "No agents found. Add .md files to agents/ or user-level agent dirs")];
 					}
 					const agents = Array.from(agentStates.values());
 					const cols = computeColumns(agentStates.size, width, maxColumns);
 
 					if (cols === 1) {
-						return agents.map(s => renderAgentCell(s, width, theme));
+						return ["", ...agents.map(s => renderAgentCell(s, width, theme))];
 					}
 
 					const cellWidth = Math.floor((width - (cols - 1)) / cols);
@@ -260,7 +263,7 @@ export default function (pi: ExtensionAPI) {
 						lines.push(cells.join("│"));
 					}
 
-					return lines;
+					return ["", ...lines];
 				},
 				invalidate() {},
 			};
@@ -830,7 +833,7 @@ export default function (pi: ExtensionAPI) {
 			widgetCtx = ctx;
 			const teamNames = Object.keys(teams);
 			if (teamNames.length === 0) {
-				ctx.ui.notify("No teams defined in .pi/agents/teams.yaml", "warning");
+				ctx.ui.notify("No teams defined", "warning");
 				return;
 			}
 
@@ -964,9 +967,12 @@ export default function (pi: ExtensionAPI) {
 
 		refreshStatus();
 		const members = Array.from(agentStates.values()).map(s => displayName(s.def.name)).join(", ");
+		const teamsPathMsg = discoveredTeamsPath
+			? `Team sets loaded from: ${discoveredTeamsPath}`
+			: `Default team active (no teams.yaml found)`;
 		_ctx.ui.notify(
 			`Team: ${activeTeamName} (${members})\n` +
-			`Team sets loaded from: .pi/agents/teams.yaml\n\n` +
+			`${teamsPathMsg}\n\n` +
 			`/specs-team          Select a team\n` +
 			`/specs-list          List active agents and status\n` +
 			`/specs-grid <1-6>    Set grid columns (1-6, default 3)`,
