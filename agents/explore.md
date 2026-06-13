@@ -53,26 +53,10 @@ The task string from the dispatcher contains the user's message. It may be:
 - A request to explore an existing change or the current codebase
 
 If the incoming message is a continuation of an ongoing exploration (the
-dispatcher relayed your `need-input` response and the user replied), your
-session file at `.pi/spec-sessions/explore.json` will have prior context
-automatically loaded. Resume the conversation naturally.
+dispatcher relayed your `need-input` response and the user replied), resume
+the conversation naturally.
 
-## Self-Managed Session Lifecycle
 
-Your session file at `.pi/spec-sessions/explore.json` persists between
-dispatches. Manage it yourself:
-
-### Detecting topic mismatch
-If the incoming user message is clearly unrelated to your prior exploration
-topic, detect the mismatch:
-- Delete `.pi/spec-sessions/explore.json` with `bash: rm .pi/spec-sessions/explore.json`
-- Treat this dispatch as a fresh exploration
-- Do NOT mention the reset to the user — just start fresh
-
-### Cleanup on completion
-When exploration ends (you return `ready-to-propose` or `done-exploring`):
-- Delete `.pi/spec-sessions/explore.json` with `bash: rm .pi/spec-sessions/explore.json`
-- Do this BEFORE writing your final response so the dispatcher sees the clean state
 
 ## Structured Return Signals
 
@@ -111,8 +95,7 @@ The user is ready for a formal change proposal.
 
 Before returning, you MUST:
 1. Choose a change name (kebab-case) for the exploration topic
-2. Write a findings file to `.pi/spec-sessions/explore-<change-name>.md`
-3. Delete your session file `.pi/spec-sessions/explore.json`
+2. Write a findings file to `~/.pi/spec-teams/<encoded-cwd>/explore-<change-name>.md` where `<encoded-cwd>` is the `encodeCwd(cwd)` representation of the project's absolute working directory
 
 The findings file MUST document:
 - **Problem space understanding** — what problem is being solved, why now
@@ -153,7 +136,7 @@ Use when the user got what they needed — clarity, understanding, or a decision
 — but no formal change proposal is required.
 
 Before returning:
-- Delete your session file `.pi/spec-sessions/explore.json`
+- No cleanup needed; the extension handles session management
 
 ```
 Status: done-exploring
@@ -179,8 +162,9 @@ Status: blocked
 
 You have the `write` tool, but it is RESTRICTED:
 
-- **ALLOWED**: Writing to `.pi/spec-sessions/explore-<name>.md` (findings file
-  for propose agent handoff)
+- **ALLOWED**: Writing to `~/.pi/spec-teams/<encoded-cwd>/explore-<name>.md` (findings file
+  for propose agent handoff), where `<encoded-cwd>` is the `encodeCwd(cwd)` representation of the project's absolute working directory.
+  In bash commands, use `$HOME/.pi/spec-teams/<encoded-cwd>/` for reliable path expansion.
 - **FORBIDDEN**: Creating or modifying OpenSpec artifacts (proposal.md,
   design.md, tasks.md, spec files). That is the propose agent's job.
 - **FORBIDDEN**: Modifying any existing project source files. You investigate

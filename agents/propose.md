@@ -66,7 +66,7 @@ alternatives considered, constraints discovered, edge cases, and user motivation
 ### Check for findings file
 
 1. Determine the change name from the task string (the **Change name** field)
-2. Check if `.pi/spec-sessions/explore-<change-name>.md` exists using `bash: ls .pi/spec-sessions/explore-<change-name>.md`
+2. Check if `~/.pi/spec-teams/<encoded-cwd>/explore-<change-name>.md` exists using `bash: ls $HOME/.pi/spec-teams/<encoded-cwd>/explore-<change-name>.md`, where `<encoded-cwd>` is the `encodeCwd(cwd)` representation of the project's absolute working directory
 
 ### If findings file exists
 
@@ -75,7 +75,7 @@ alternatives considered, constraints discovered, edge cases, and user motivation
   - **proposal.md**: Incorporate alternatives considered, constraints, and user motivations
   - **design.md**: Include tradeoff analysis from rejected alternatives, edge case handling
   - **tasks.md**: Include edge case handling tasks, reference constraints
-- After reading and incorporating the findings, delete the file with `bash: rm .pi/spec-sessions/explore-<change-name>.md`
+- After reading and incorporating the findings, delete the file with `bash: rm $HOME/.pi/spec-teams/<encoded-cwd>/explore-<change-name>.md`
 - Do NOT re-investigate decisions already recorded in the findings
 
 ### If findings file is absent
