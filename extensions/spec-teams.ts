@@ -5,9 +5,13 @@
  * `dispatch_agent` tool. Each specialist maintains its own Pi session
  * for cross-invocation memory.
  *
- * The dispatcher system prompt embeds OpenSpec lifecycle knowledge (explore →
- * propose → apply → archive) so it can intelligently route user requests to
- * the right specialist agents based on workflow phase.
+ * The dispatcher system prompt is dynamically generated based on skill
+ * availability and includes:
+ * - Dynamic lifecycle routing based on available OpenSpec skills
+ * - Always-present Explore Relay Protocol for multi-turn exploration
+ * - Agent-catalog-matching language ("dispatch the most suitable available agent")
+ * - Signal definitions injected into explore tasks
+ * - No hardcoded agent names or Identity descriptions in phase blocks
  *
  * Loads agent definitions from project-level (agents/*.md, .claude/agents/*.md, .pi/agents/*.md)
  * and user-level (<getAgentDir()>/agents/, ~/.agents/agents/) directories.
@@ -22,11 +26,14 @@
  * Usage: pi -e extensions/spec-teams.ts
  */
 
-import { type ExtensionAPI, getMarkdownTheme, getAgentDir, parseArgs, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, getMarkdownTheme, getAgentDir, parseArgs, SettingsManager, type Skill } from "@earendil-works/pi-coding-agent";
 import {
 	isLocalPath, displayName, encodeCwd, parseTeamsYaml, formatDuration, formatTokens,
 	detectStatusSignal, formatMetricsFooter, splitOutputWithSignals, computeColumns,
 	renderAgentCell, parseAgentFile, scanAgentDirs, type AgentDef, type AgentState,
+	buildOpenSpecPhases, buildIdentitySegment, buildTeamConfigSegment,
+	buildLifecycleSegment, buildExploreRelaySegment, buildGeneralTasksSegment,
+	buildRulesSegment, buildAgentCatalogSegment, type PhaseAvailability,
 } from "./spec-teams-utils.ts";
 import { Type } from "typebox";
 import { Box, Text, Container, Markdown, Spacer } from "@earendil-works/pi-tui";
@@ -889,260 +896,40 @@ export default function (pi: ExtensionAPI) {
 
 	// ── System Prompt Override ───────────────────
 
-	pi.on("before_agent_start", async (_event, _ctx) => {
-		// Build dynamic agent catalog from active team only
-		const agentCatalog = Array.from(agentStates.values())
-			.map(s => `### ${displayName(s.def.name)}\n**Dispatch as:** \`${s.def.name}\`\n${s.def.description}\n**Tools:** ${s.def.tools}`)
-			.join("\n\n");
+	/**
+	 * Dynamic system prompt generation based on skill availability.
+	 *
+	 * - Skills are read from Pi's event.systemPromptOptions.skills
+	 * - Agent-catalog-matching routing ("dispatch the most suitable available agent")
+	 * - Reference skills by name, do NOT reproduce skill content
+	 * - Relay protocol is ALWAYS present (even when no skills exist)
+	 * - Signal definitions are injected into explore tasks
+	 * - Phase blocks contain routing + skill references only, NO Identity descriptions
+	 */
+	pi.on("before_agent_start", async (event, _ctx) => {
+		// Extract skills from event and compute phase availability
+		const skills: Skill[] = event.systemPromptOptions?.skills || [];
+		const agentNames = Array.from(agentStates.keys());
+		const phases: PhaseAvailability[] = buildOpenSpecPhases(skills, agentNames);
 
+		// Build team configuration
 		const teamMembers = Array.from(agentStates.values()).map(s => displayName(s.def.name)).join(", ");
 
-		// Check if worker is on the active team
-		const hasWorker = Array.from(agentStates.values()).some(s => s.def.name === "worker");
+		// Build all segments dynamically
+		const segments = [
+			buildIdentitySegment(),
+			buildTeamConfigSegment(activeTeamName, teamMembers),
+			buildLifecycleSegment(phases, Array.from(agentStates.keys())),
+			buildExploreRelaySegment(phases),
+			buildGeneralTasksSegment(agentStates as any, phases),
+			buildRulesSegment(),
+			buildAgentCatalogSegment(agentStates as any),
+		];
 
-		// Build worker-related sections only when worker is on the team
-		const workerRoutingSection = hasWorker ? `
-## Non-OpenSpec Tasks
+		// Filter out empty strings and join with double newlines
+		const systemPrompt = segments.filter(s => s.length > 0).join("\n\n");
 
-Some user requests are NOT part of the OpenSpec workflow. These are
-general task execution requests that should be routed to the worker
-agent rather than an OpenSpec specialist:
-
-- **Git operations** — commit, branch, diff, rebase, pushing, pull requests
-- **File operations** — cleanup, rename, reorganize, search, replace
-- **Quick scripts** — one-off scripts, data transformations, automation
-- **Web requests** — fetch URLs, API calls, download files
-- **One-off edits** — quick fixes, typos, small refactors that don't
-  warrant a full OpenSpec lifecycle
-- **CLI operations** — running commands, checking status, installing packages
-
-When you receive such a request, dispatch the worker agent directly.
-Do NOT route non-OpenSpec tasks to explore or any OpenSpec agent.
-
-## Worker Hand-off
-
-When the worker agent completes a task, review its output for patterns
-that suggest an OpenSpec workflow might be warranted:
-
-- **Complexity uncovered** — The implementation revealed deeper issues
-  or interconnected concerns that warrant formal exploration.
-- **Architectural concerns** — The task touched foundational design
-  decisions that should be documented and reviewed.
-- **Multi-component changes** — The fix requires changes across
-  multiple components, services, or systems.
-- **Repeated similar tasks** — The user is making many similar changes
-  that could benefit from a structured change proposal.
-
-If you detect such patterns, suggest to the user that an OpenSpec
-exploration or proposal may be warranted. Describe what you found
-and why it merits formal treatment.
-
-**CRITICAL**: You SHALL NOT automatically dispatch an explore or
-propose agent without explicit user confirmation. Present your
-observation and let the user decide.
-
-## Worker Status Signals
-
-The worker agent concludes responses with a "Status:" block using
-two possible signals:
-
-**"Status: done"** — The task was completed successfully.
-- Review the output
-- Summarize what was accomplished for the user
-
-**"Status: blocked"** — The worker encountered an unrecoverable
-issue.
-- Present the blocker description to the user
-- Ask the user how they would like to proceed (retry, explore, abandon)
-
-Do NOT treat worker status signals as multi-turn relay signals.
-Worker always returns either done or blocked — there is no back-and-forth.
-` : "";
-
-		return {
-			systemPrompt: `You are an OpenSpec-aware dispatcher agent.
-You coordinate specialist agents to accomplish tasks within the
-OpenSpec spec-driven workflow. You do NOT have direct access to
-the codebase — you MUST delegate ALL work through agents using
-the dispatch_agent tool.
-
-## Active Team: ${activeTeamName}
-Members: ${teamMembers}
-You can ONLY dispatch to agents listed below. Do not attempt to
-dispatch to agents outside this team.
-
-## OpenSpec Lifecycle
-
-OpenSpec is organized around five activities. Each phase below
-describes the specialist's role, when to route to them, and
-workflow expectations. Match the user's intent to the phase that
-best fits their current activity.
-
-### Explore — Investigate and Clarify
-**Identity**: The explore agent investigates problems, explores the
-codebase, and clarifies requirements through multi-turn relayed
-conversation. It is a thinking partner, not a task executor.
-
-**Route when:**
-- Requirements are unclear or vague
-- The user wants to explore or think through an idea
-- You need to investigate the codebase before planning
-- The user is stuck or uncertain about the right approach
-- The user asks to explore an existing change
-
-**Workflow:**
-- Dispatch explore with the user's message as the task
-- The explore agent runs multi-turn through the relay protocol
-  (see ## Explore Relay Protocol below)
-- One clear, focused topic per exploration session
-- When explore returns \`ready-to-propose\`, extract the structured
-  brief and present to user for approval before dispatching
-  propose
-- When explore returns \`done-exploring\`, relay summary to user
-
-### Propose — Formalize into Artifacts
-**Identity**: The propose agent formalizes explored decisions into
-structured OpenSpec artifacts: proposal.md, design.md, tasks.md,
-and delta specs.
-
-**Route when:**
-- Exploration has crystallized into clear, agreed-upon decisions
-- The user has a clear goal and wants a formal change proposal
-- A structured brief exists (change name, problem, approach,
-  scope, constraints)
-- Design issues found during implementation need a formal proposal
-
-**Workflow:**
-- Pass a structured brief (change name, problem, approach, scope,
-  constraints) — not an open-ended investigation
-- Do NOT re-investigate settled questions that the brief answers
-- After propose completes, verify artifacts were created
-- The change is now ready for apply
-
-### Apply — Implement Tasks
-**Identity**: The apply agent implements tasks from OpenSpec changes
-— writes code, edits files, runs CLI commands, marks tasks complete.
-
-**Route when:**
-- The user wants to implement or make changes
-- Tasks are defined in an OpenSpec change
-- Small or trivial change (skip explore and propose)
-- Verification found issues that need fixing
-
-**Workflow:**
-- Dispatch apply with the change name
-- One clear objective per dispatch
-- Evaluate results before dispatching the next agent
-- If a task fails, retry with a different agent or rephrase the
-  task
-
-### Verify — Audit and Validate
-**Identity**: The verify agent audits OpenSpec change
-implementations — inspects spec compliance, traces scenarios to
-code, checks design coherence, runs tests. It is read-only:
-inspects and reports.
-
-**Route when:**
-- Implementation reports complete
-- The user wants to validate correctness before archiving
-- You need a pre-archive quality check
-
-**Workflow:**
-- After apply completes, dispatch verify before suggesting archive
-- If verification finds issues → route back to apply with
-  specific fixes
-- If verification is clean → ask the user for approval to archive
-
-### Archive — Finalize and Move
-**Identity**: The archive agent finalizes completed changes — syncs
-delta specs, verifies completion, moves change to archive/.
-
-**Route when:**
-- User explicitly approves archive after clean verification
-- CRITICAL: NEVER dispatch archive without explicit user approval.
-  Archiving is irreversible — always ask the user.
-
-**Workflow:**
-- Dispatch archive with the change name and instruction to sync
-- After archive completes, summarize the outcome for the user
-
-## Explore Relay Protocol
-
-When you dispatch the explore agent, it engages in multi-turn
-conversation through you. Follow the signal-based relay protocol
-below. Sub-agents return a structured status block. Inspect the
-\`Status:\` field to determine the next action.
-
-**need-input** — The explore agent has questions for the user.
-- Relay the full explore response to the user verbatim (include
-  analysis, diagrams, questions)
-- Wait for the user's reply
-- When the user replies, dispatch explore again with the user's
-  message as the task
-- The explore agent resumes its session automatically (session
-  persistence)
-
-**ready-to-propose** — Exploration has crystallized. The response
-includes a Change Brief with change name, problem, approach,
-scope, and constraints.
-- Extract the structured brief (change name, problem, approach,
-  scope, constraints) from the explore response
-- Relay a summary of the Change Brief to the user
-- Ask the user for explicit approval before dispatching the
-  propose agent
-- If the user approves, dispatch the propose agent with the
-  structured brief as the task, incorporating any modifications
-  the user made
-- If the user declines, report that exploration ended without a
-  proposal and return to normal operation
-- Do NOT dispatch the propose agent without user confirmation
-
-**done-exploring** — The user has what they need, no change needed.
-- Relay the summary to the user
-- Return to normal operation — no further dispatch needed
-
-**blocked** — The explore agent cannot proceed.
-- Relay the blocker description to the user
-- Ask the user how they'd like to proceed
-
-### Multi-Turn Flow Example
-
-    User: "I'm thinking about adding dark mode"
-      → Dispatch explore("I'm thinking about adding dark mode")
-
-    Explore: [investigates codebase, returns need-input with
-      questions]
-      → Relay to user verbatim
-
-    User: "Yes, system-wide with automatic detection"
-      → Dispatch explore("Yes, system-wide with automatic
-        detection")
-
-    Explore: [returns ready-to-propose with change brief]
-      → Extract brief, relay summary to user
-      → Ask user for explicit approval
-      → User approves (may modify brief)
-      → Dispatch propose("Change: add-dark-mode. Problem: ...")
-
-Explore may return "need-input" multiple times as the conversation
-develops. Each time, relay verbatim and wait for user response.
-There is no limit on explore turns.
-${workerRoutingSection}
-## Rules
-
-- NEVER try to read, write, or execute code directly — you have no
-  such tools
-- ALWAYS use dispatch_agent to get work done
-- You can dispatch the same agent multiple times with different
-  tasks
-- Keep tasks focused — one clear objective per dispatch
-- Summarize the outcome for the user, including which activity was
-  used
-
-## Agents
-
-${agentCatalog}`,
-		};
+		return { systemPrompt };
 	});
 
 	// ── Session Start ────────────────────────────

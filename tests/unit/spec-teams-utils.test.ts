@@ -76,6 +76,9 @@ import {
   renderAgentCell,
   isLocalPath,
   scanAgentDirs,
+  buildOpenSpecPhases,
+  EXPLORE_SIGNALS,
+  buildRulesSegment,
 } from '../../extensions/spec-teams-utils.ts';
 
 // ---------------------------------------------------------------------------
@@ -936,5 +939,173 @@ describe('scanAgentDirs', () => {
     // 'subagent' has no .md extension, so it's skipped
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe('valid');
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('buildOpenSpecPhases', () => {
+  const mockSkill = (name: string) => ({
+    name,
+    description: `Description for ${name}`,
+    filePath: `/fake/${name}/SKILL.md`,
+    baseDir: '/fake',
+    sourceInfo: { type: 'dir', path: '/fake' } as any,
+    disableModelInvocation: false,
+  });
+
+  it('all skills present marks all available except verify (no skill, no agent)', () => {
+    const skills = [
+      mockSkill('openspec-explore'),
+      mockSkill('openspec-propose'),
+      mockSkill('openspec-apply-change'),
+      mockSkill('openspec-archive-change'),
+    ];
+    const phases = buildOpenSpecPhases(skills, []);
+    expect(phases).toHaveLength(5);
+    expect(phases.find(p => p.phase === 'explore')?.available).toBe(true);
+    expect(phases.find(p => p.phase === 'propose')?.available).toBe(true);
+    expect(phases.find(p => p.phase === 'apply')?.available).toBe(true);
+    expect(phases.find(p => p.phase === 'verify')?.available).toBe(false); // No skill, no agent
+    expect(phases.find(p => p.phase === 'archive')?.available).toBe(true);
+  });
+
+  it('verify phase available when verify agent is present', () => {
+    const skills = [
+      mockSkill('openspec-explore'),
+      mockSkill('openspec-propose'),
+      mockSkill('openspec-apply-change'),
+      mockSkill('openspec-archive-change'),
+    ];
+    const phases = buildOpenSpecPhases(skills, ['verify']);
+    expect(phases.find(p => p.phase === 'verify')?.available).toBe(true); // Agent present
+  });
+
+  it('no skills marks all unavailable', () => {
+    const phases = buildOpenSpecPhases([], []);
+    expect(phases).toHaveLength(5);
+    phases.forEach(p => {
+      expect(p.available).toBe(false);
+    });
+  });
+
+  it('partial skills marks only matching phases available', () => {
+    const skills = [mockSkill('openspec-explore')];
+    const phases = buildOpenSpecPhases(skills, []);
+    expect(phases.find(p => p.phase === 'explore')?.available).toBe(true);
+    expect(phases.find(p => p.phase === 'propose')?.available).toBe(false);
+    expect(phases.find(p => p.phase === 'apply')?.available).toBe(false);
+  });
+
+  it('null input is treated as empty array', () => {
+    const phases = buildOpenSpecPhases(null, []);
+    expect(phases).toHaveLength(5);
+    phases.forEach(p => {
+      expect(p.available).toBe(false);
+    });
+  });
+
+  it('undefined input is treated as empty array', () => {
+    const phases = buildOpenSpecPhases(undefined, []);
+    expect(phases).toHaveLength(5);
+    phases.forEach(p => {
+      expect(p.available).toBe(false);
+    });
+  });
+
+  it('non-OpenSpec skills are ignored', () => {
+    const skills = [
+      mockSkill('some-other-skill'),
+      mockSkill('another-skill'),
+    ];
+    const phases = buildOpenSpecPhases(skills, []);
+    phases.forEach(p => {
+      expect(p.available).toBe(false);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('EXPLORE_SIGNALS', () => {
+  it('has four signals', () => {
+    expect(EXPLORE_SIGNALS).toHaveLength(4);
+  });
+
+  it('signals have expected names', () => {
+    const names = EXPLORE_SIGNALS.map(s => s.name);
+    expect(names).toContain('need-input');
+    expect(names).toContain('ready-to-propose');
+    expect(names).toContain('done-exploring');
+    expect(names).toContain('blocked');
+  });
+
+  it('signals have descriptions', () => {
+    EXPLORE_SIGNALS.forEach(signal => {
+      expect(signal.description).toBeTruthy();
+      expect(typeof signal.description).toBe('string');
+      expect(signal.description.length).toBeGreaterThan(0);
+    });
+  });
+
+  it('signal descriptions match relay protocol expectations', () => {
+    const needInput = EXPLORE_SIGNALS.find(s => s.name === 'need-input');
+    expect(needInput?.description).toContain('relay verbatim');
+    expect(needInput?.description).toContain('wait for reply');
+
+    const readyToPropose = EXPLORE_SIGNALS.find(s => s.name === 'ready-to-propose');
+    expect(readyToPropose?.description).toContain('extract');
+    expect(readyToPropose?.description).toContain('ask approval');
+
+    const doneExploring = EXPLORE_SIGNALS.find(s => s.name === 'done-exploring');
+    expect(doneExploring?.description).toContain('relay summary');
+    expect(doneExploring?.description).toContain('return to normal');
+
+    const blocked = EXPLORE_SIGNALS.find(s => s.name === 'blocked');
+    expect(blocked?.description).toContain('relay blocker');
+    expect(blocked?.description).toContain('ask how to proceed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('buildRulesSegment', () => {
+  it('contains ## Agents catalog reference', () => {
+    const rules = buildRulesSegment();
+    expect(rules).toContain('## Agents');
+  });
+
+  it('contains write and edit as implementation tool examples', () => {
+    const rules = buildRulesSegment();
+    expect(rules).toContain('write and edit');
+  });
+
+  it('contains read and grep as investigation tool examples', () => {
+    const rules = buildRulesSegment();
+    expect(rules).toContain('read and grep');
+  });
+
+  it('contains bash as command-running tool example', () => {
+    const rules = buildRulesSegment();
+    expect(rules).toContain('bash');
+  });
+
+  it('preserves existing NEVER try to read rule', () => {
+    const rules = buildRulesSegment();
+    expect(rules).toContain('NEVER try to read, write, or execute code directly');
+  });
+
+  it('preserves existing ALWAYS use dispatch_agent rule', () => {
+    const rules = buildRulesSegment();
+    expect(rules).toContain('ALWAYS use dispatch_agent');
+  });
+
+  it('preserves existing Keep tasks focused rule', () => {
+    const rules = buildRulesSegment();
+    expect(rules).toContain('Keep tasks focused');
+  });
+
+  it('contains all six rules', () => {
+    const rules = buildRulesSegment();
+    // Count bullet points (lines starting with "- ")
+    const bulletCount = (rules.match(/^- /gm) || []).length;
+    expect(bulletCount).toBe(6);
   });
 });

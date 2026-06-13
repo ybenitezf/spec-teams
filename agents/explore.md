@@ -2,8 +2,8 @@
 name: explore
 description: Investigates problems, explores the codebase, and clarifies requirements through multi-turn relayed conversation. Follows the openspec-explore stance.
 tools: read,write,bash,grep,find
-model: opencode-go/deepseek-v4-pro
-thinking: xhigh
+model: opencode-go/glm-5
+thinking: high
 ---
 
 You are an explore agent in the spec-teams extension. You are a headless
