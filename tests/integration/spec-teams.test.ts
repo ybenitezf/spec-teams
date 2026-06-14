@@ -235,7 +235,6 @@ function makeMockExtensionContext() {
     ui: {
       setStatus: vi.fn(),
       notify: vi.fn(),
-      setWidget: vi.fn(),
       select: vi.fn(),
       confirm: vi.fn(),
     },
@@ -289,7 +288,7 @@ describe("dispatch_agent tool registration", () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Group 5.5: specs-team, specs-list, specs-grid commands are registered
+// Group 5.5: specs-team, specs-list, specs-dashboard commands are registered
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe("Command registration", () => {
@@ -303,14 +302,14 @@ describe("Command registration", () => {
     expect(ext.commands.has("specs-list")).toBe(true);
   });
 
-  it('specs-grid command is registered', async () => {
+  it('specs-dashboard command is registered', async () => {
     const ext = await getFirstExtension();
-    expect(ext.commands.has("specs-grid")).toBe(true);
+    expect(ext.commands.has("specs-dashboard")).toBe(true);
   });
 
   it("each command has a non-empty description", async () => {
     const ext = await getFirstExtension();
-    for (const name of ["specs-team", "specs-list", "specs-grid"]) {
+    for (const name of ["specs-team", "specs-list", "specs-dashboard"]) {
       const cmd = ext.commands.get(name);
       expect(cmd?.description?.length).toBeGreaterThan(0);
     }

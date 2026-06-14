@@ -3,7 +3,7 @@
  */
 
 import { getAgentDir, type Skill } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { matchesKey, Key, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Theme } from "@earendil-works/pi-tui";
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join, resolve } from "path";
 import { homedir } from "os";
@@ -233,20 +233,234 @@ export function splitOutputWithSignals(text: string): { type: "text" | "signal";
 	return segments;
 }
 
-// ── computeColumns ────────────────────────────────
+// ── renderDashboardDialog ────────────────────────
 
-export function computeColumns(numAgents: number, width: number, maxCols: number): number {
-	const MIN_CELL = 12;
-	for (let cols = Math.min(maxCols, numAgents); cols >= 1; cols--) {
-		const cellWidth = Math.floor((width - (cols - 1)) / cols);
-		if (cellWidth >= MIN_CELL) return cols;
-	}
-	return 1;
+/**
+ * Plain Component interface for TUI overlay rendering.
+ * Follows the pattern from pi-openspec-status: render(), handleInput(), invalidate().
+ */
+export interface DashboardComponent {
+	render(width: number): string[];
+	handleInput(data: string): void;
+	invalidate(): void;
 }
 
-// ── renderAgentCell ───────────────────────────────
+/**
+ * Render a scrollable dashboard dialog showing detailed per-agent cards.
+ *
+ * Returns a plain Component object (not a Container subclass) that:
+ * - Draws box borders ╭─╮│╰─╯ manually using theme.fg("border", ...)
+ * - Implements manual scrolling via scrollOffset + maxVisibleLines
+ * - Uses handleInput() with matchesKey() for ESC/Enter/q/j/k/up/down/pgup/pgdn
+ * - Caches rendered lines for performance
+ *
+ * Each agent card displays:
+ * - Status icon + display name
+ * - Status text, model, thinking level, tools
+ * - Description
+ * - Metrics: runs, elapsed, context%, cost, session state
+ */
+export function renderDashboardDialog(
+	states: AgentState[],
+	activeTeamName: string,
+	theme: Theme,
+	done: (result?: any) => void,
+	tui?: any, // TUI instance for requestRender()
+): DashboardComponent {
+	const PADDING_H = 2;
+	const PADDING_V = 1;
+	let scrollOffset = 0;
+	let cachedWidth: number | undefined;
+	let cachedLines: string[] | [];
 
-export function renderAgentCell(state: AgentState, cellWidth: number, theme: any): string {
+	/**
+	 * Build all content lines (without borders or viewport clipping).
+	 * Called on invalidate or when content changes.
+	 */
+	function buildContentLines(theme: Theme, innerContentWidth: number): string[] {
+		const lines: string[] = [];
+
+		// Add vertical padding at top
+		for (let i = 0; i < PADDING_V; i++) {
+			lines.push("");
+		}
+
+		// Header with team name
+		lines.push(theme.fg("accent", theme.bold(`👥 ${activeTeamName} Dashboard`)));
+		lines.push("");
+
+		if (states.length === 0) {
+			lines.push(theme.fg("dim", "No agents in this team."));
+			lines.push("");
+		} else {
+			// Render each agent as a detail card
+			for (const state of states) {
+				const cardLines = buildAgentCardLines(state, theme, innerContentWidth);
+				lines.push(...cardLines);
+				lines.push(""); // spacer between cards
+			}
+		}
+
+		// Footer hint
+		lines.push(theme.fg("dim", "Press Escape, Enter, or q to close · ↑↓/jk to scroll · PgUp/PgDn for pages"));
+
+		// Add vertical padding at bottom
+		for (let i = 0; i < PADDING_V; i++) {
+			lines.push("");
+		}
+
+		return lines;
+	}
+
+	/**
+	 * Render the full dialog including borders and viewport clipping.
+	 */
+	function render(width: number): string[] {
+		const innerW = Math.max(1, width - 2); // Account for left/right border chars
+		const innerContentWidth = innerW - 2 * PADDING_H;
+
+		// Rebuild content if needed
+		if (!cachedLines || cachedWidth !== width) {
+			cachedLines = buildContentLines(theme, innerContentWidth);
+			cachedWidth = width;
+		}
+
+		const allContentLines = cachedLines;
+		const totalLines = allContentLines.length;
+
+		// Calculate max visible lines (height minus top/bottom borders)
+		// The TUI will tell us how many lines we can render based on maxHeight
+		// We'll use a reasonable default and let the overlay constrain it
+		const maxVisibleLines = Math.max(5, 30); // Minimum 5 lines, default 30
+
+		// Clamp scroll offset
+		if (totalLines <= maxVisibleLines) {
+			scrollOffset = 0;
+		} else {
+			scrollOffset = Math.min(scrollOffset, totalLines - maxVisibleLines);
+			scrollOffset = Math.max(0, scrollOffset);
+		}
+
+		// Extract visible window of lines
+		const visibleLines = allContentLines.slice(scrollOffset, scrollOffset + maxVisibleLines);
+
+		// Build final output with borders
+		const output: string[] = [];
+
+		// Top border with title
+		const title = ` 👥 ${activeTeamName} Dashboard `;
+		const titleStr = truncateToWidth(title, innerW);
+		const titleW = visibleWidth(titleStr);
+		const leftDash = Math.floor((innerW - titleW) / 2);
+		const rightDash = Math.max(0, innerW - titleW - leftDash);
+		output.push(
+			theme.fg("border", `╭${"─".repeat(leftDash)}`) +
+			theme.fg("accent", titleStr) +
+			theme.fg("border", `${"─".repeat(rightDash)}╮`),
+		);
+
+		// Content lines with side borders and horizontal padding
+		for (const line of visibleLines) {
+			const truncated = truncateToWidth(line, innerContentWidth, "…", true);
+			const paddedLine = " ".repeat(PADDING_H) + truncated + " ".repeat(PADDING_H);
+			output.push(theme.fg("border", "│") + paddedLine + theme.fg("border", "│"));
+		}
+
+		// Fill remaining space with empty bordered lines if needed
+		const filledCount = visibleLines.length;
+		for (let i = filledCount; i < maxVisibleLines; i++) {
+			output.push(theme.fg("border", "│") + " ".repeat(innerW) + theme.fg("border", "│"));
+		}
+
+		// Scroll indicator if content overflows
+		if (totalLines > maxVisibleLines) {
+			const scrollPct = Math.round((scrollOffset / (totalLines - maxVisibleLines)) * 100);
+			const scrollHint = theme.fg("dim", ` Scroll: ${scrollOffset + 1}-${Math.min(scrollOffset + maxVisibleLines, totalLines)}/${totalLines} (${scrollPct}%) `);
+			const scrollTruncated = truncateToWidth(scrollHint, innerContentWidth, "…", true);
+			output.push(theme.fg("border", "│") + " ".repeat(PADDING_H) + scrollTruncated + " ".repeat(PADDING_H) + theme.fg("border", "│"));
+		} else {
+			output.push(theme.fg("border", "│") + " ".repeat(innerW) + theme.fg("border", "│"));
+		}
+
+		// Bottom border
+		output.push(theme.fg("border", `╰${"─".repeat(innerW)}╯`));
+
+		return output;
+	}
+
+	/**
+	 * Handle keyboard input for closing and scrolling.
+	 */
+	function handleInput(data: string): void {
+		// Close actions
+		if (matchesKey(data, Key.escape) || data === "q" || data === "Q") {
+			done(undefined);
+			return;
+		}
+
+		if (data === "enter" || data === "\r" || data === "\n") {
+			done(undefined);
+			return;
+		}
+
+		// Scroll actions
+		const totalLines = cachedLines ? cachedLines.length : 0;
+		const maxVisibleLines = 30;
+
+		if (matchesKey(data, Key.up) || data === "k" || data === "K") {
+			if (scrollOffset > 0) {
+				scrollOffset--;
+				invalidate();
+				if (tui) tui.requestRender();
+			}
+		} else if (matchesKey(data, Key.down) || data === "j" || data === "J") {
+			if (scrollOffset < totalLines - maxVisibleLines) {
+				scrollOffset++;
+				invalidate();
+				if (tui) tui.requestRender();
+			}
+		} else if (matchesKey(data, Key.pageUp)) {
+			scrollOffset = Math.max(0, scrollOffset - maxVisibleLines);
+			invalidate();
+			if (tui) tui.requestRender();
+		} else if (matchesKey(data, Key.pageDown)) {
+			scrollOffset = Math.min(totalLines - maxVisibleLines, scrollOffset + maxVisibleLines);
+			invalidate();
+			if (tui) tui.requestRender();
+		} else if (data === "g" || data === "G") {
+			// Home/End
+			if (data === "g") {
+				scrollOffset = 0;
+			} else {
+				scrollOffset = Math.max(0, totalLines - maxVisibleLines);
+			}
+			invalidate();
+			if (tui) tui.requestRender();
+		}
+	}
+
+	/**
+	 * Invalidate cached lines and recalculate on next render.
+	 */
+	function invalidate(): void {
+		cachedWidth = undefined;
+		cachedLines = undefined;
+	}
+
+	return {
+		render,
+		handleInput,
+		invalidate,
+	};
+}
+
+/**
+ * Build text lines for a single agent detail card (no borders).
+ */
+function buildAgentCardLines(state: AgentState, theme: Theme, innerContentWidth: number): string[] {
+	const lines: string[] = [];
+
+	// Status icon + name line
 	const statusColor = state.status === "idle" ? "dim"
 		: state.status === "running" ? "accent"
 		: state.status === "done" ? "success" : "error";
@@ -254,32 +468,47 @@ export function renderAgentCell(state: AgentState, cellWidth: number, theme: any
 		: state.status === "running" ? "●"
 		: state.status === "done" ? "✓" : "✗";
 
-	const iconStr = theme.fg(statusColor, statusIcon);
-	const pctStr = `${Math.ceil(state.contextPct)}%`;
-	const pctLen = pctStr.length;
-	const name = displayName(state.def.name);
+	lines.push(theme.fg(statusColor, statusIcon) + " " + theme.bold(displayName(state.def.name)));
 
-	// name budget: cellWidth - icon(1) - space(1) - space(1) - pctLen
-	const nameBudget = cellWidth - 1 - 1 - 1 - pctLen;
+	// Status line with key metrics
+	const statusLine = [
+		state.status,
+		`${state.runCount} run${state.runCount !== 1 ? "s" : ""}`,
+		formatDuration(state.elapsed),
+		`ctx ${Math.round(state.contextPct)}%`,
+		state.cost === 0 ? "$0" : `$${state.cost.toFixed(4)}`,
+	].join(" · ");
+	lines.push(theme.fg("muted", statusLine));
 
-	let result: string;
-	if (nameBudget < 1) {
-		// Narrow cell: drop percentage, just icon + truncated name
-		result = iconStr + " " + truncateToWidth(name, Math.max(1, cellWidth - 2));
-	} else {
-		const truncatedName = truncateToWidth(name, nameBudget);
-		result = iconStr + " " + truncatedName + " " + pctStr;
+	// Model
+	const model = state.def.model || "default";
+	lines.push(theme.fg("text", `Model: ${model}`));
+
+	// Thinking level
+	if (state.def.thinking && state.def.thinking !== "off") {
+		lines.push(theme.fg("text", `Thinking: ${state.def.thinking}`));
 	}
 
-	// Post-render safety guard: re-truncate if visible width exceeds target
-	if (visibleWidth(result) > cellWidth) {
-		result = truncateToWidth(result, cellWidth);
+	// Tools
+	lines.push(theme.fg("text", `Tools: ${state.def.tools}`));
+
+	// Session state
+	const sessionState = state.sessionFile ? "resumed" : "new";
+	lines.push(theme.fg("text", `Session: ${sessionState}`));
+
+	// Description (if present) — render as plain text for simplicity
+	if (state.def.description) {
+		lines.push("");
+		// Wrap description using wrapTextWithAnsi to handle long lines while preserving ANSI codes
+		const wrappedDescLines = wrapTextWithAnsi(state.def.description, innerContentWidth);
+		for (const descLine of wrappedDescLines) {
+			if (descLine.trim()) {
+				lines.push(theme.fg("text", descLine));
+			}
+		}
 	}
 
-	// Pad to exact cellWidth
-	result = truncateToWidth(result, cellWidth, "", true);
-
-	return result;
+	return lines;
 }
 
 // ── parseAgentFile ────────────────────────────────

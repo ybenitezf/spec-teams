@@ -11,8 +11,6 @@ const {
   mockResolve,
   mockHomedir,
   mockGetAgentDir,
-  mockTruncateToWidth,
-  mockVisibleWidth,
 } = vi.hoisted(() => ({
   mockReadFileSync: vi.fn(),
   mockExistsSync: vi.fn(),
@@ -51,11 +49,7 @@ vi.mock('os', () => ({
 
 vi.mock('@earendil-works/pi-coding-agent', () => ({
   getAgentDir: mockGetAgentDir,
-}));
-
-vi.mock('@earendil-works/pi-tui', () => ({
-  truncateToWidth: mockTruncateToWidth,
-  visibleWidth: mockVisibleWidth,
+  getMarkdownTheme: () => ({}),
 }));
 
 // ---------------------------------------------------------------------------
@@ -72,8 +66,6 @@ import {
   detectStatusSignal,
   formatMetricsFooter,
   splitOutputWithSignals,
-  computeColumns,
-  renderAgentCell,
   isLocalPath,
   scanAgentDirs,
   getAgentDirs,
@@ -81,6 +73,7 @@ import {
   buildOpenSpecPhases,
   EXPLORE_SIGNALS,
   buildRulesSegment,
+  renderDashboardDialog,
 } from '../../extensions/spec-teams-utils.ts';
 
 // ---------------------------------------------------------------------------
@@ -610,129 +603,7 @@ describe('splitOutputWithSignals', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-describe('computeColumns', () => {
-  it('one agent, wide terminal returns 1', () => {
-    expect(computeColumns(1, 80, 3)).toBe(1);
-  });
 
-  it('six agents, wide terminal, max 3 returns 3', () => {
-    expect(computeColumns(6, 80, 3)).toBe(3);
-  });
-
-  it('six agents, narrow terminal, max 6 returns 2', () => {
-    expect(computeColumns(6, 30, 6)).toBe(2);
-  });
-
-  it('narrow terminal forces single column', () => {
-    expect(computeColumns(3, 12, 3)).toBe(1);
-  });
-
-  it('zero agents returns 1 (min column)', () => {
-    expect(computeColumns(0, 80, 3)).toBe(1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-describe('renderAgentCell', () => {
-  const mockTheme = {
-    fg: vi.fn((_color: string, text: string) => text),
-  };
-
-  function makeState(
-    overrides: Partial<AgentState> = {},
-  ): AgentState {
-    return {
-      def: {
-        name: 'worker',
-        description: 'Test agent',
-        tools: 'read',
-        systemPrompt: 'You are a test agent.',
-        file: '/fake/path/worker.md',
-        thinking: 'off',
-        model: undefined,
-        optIn: false,
-      },
-      status: 'idle',
-      task: 'testing',
-      toolCount: 0,
-      elapsed: 0,
-      lastWork: '',
-      contextPct: 50,
-      sessionFile: null,
-      runCount: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cost: 0,
-      ...overrides,
-    };
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('idle agent cell', () => {
-    const state = makeState({ status: 'idle', contextPct: 50 });
-    const result = renderAgentCell(state, 20, mockTheme);
-    // icon + " " + name + " " + pct = "○ Worker 50%" (12 chars), padded to 20
-    expect(result).toBe('○ Worker 50%        ');
-    // visible width should equal cellWidth
-    expect(mockVisibleWidth).toHaveBeenCalled();
-  });
-
-  it('running agent cell', () => {
-    const state = makeState({ status: 'running', contextPct: 75 });
-    const result = renderAgentCell(state, 20, mockTheme);
-    expect(result).toContain('●');
-    expect(result).toContain('Worker');
-    expect(result).toContain('75%');
-  });
-
-  it('done agent cell', () => {
-    const state = makeState({ status: 'done', contextPct: 100 });
-    const result = renderAgentCell(state, 20, mockTheme);
-    expect(result).toContain('✓');
-    expect(result).toContain('Worker');
-  });
-
-  it('error agent cell', () => {
-    const state = makeState({ status: 'error', contextPct: 30 });
-    const result = renderAgentCell(state, 20, mockTheme);
-    expect(result).toContain('✗');
-    expect(result).toContain('Worker');
-  });
-
-  it('narrow cell drops percentage', () => {
-    const state = makeState({ status: 'idle', contextPct: 50, def: { ...makeState().def, name: 'worker' } });
-    // cellWidth = 6 yields nameBudget = 6-1-1-1-3 = 0 (< 1)
-    const result = renderAgentCell(state, 6, mockTheme);
-    expect(result).not.toContain('50%');
-    // Should just be icon + space + truncated name, padded to 6
-    expect(result).toHaveLength(6);
-  });
-
-  it('cell is correctly padded to exact cellWidth', () => {
-    const state = makeState({ status: 'idle' });
-    const result = renderAgentCell(state, 20, mockTheme);
-    expect(result).toHaveLength(20);
-  });
-
-  it('cell with longer name truncation', () => {
-    const state = makeState({
-      status: 'idle',
-      contextPct: 10,
-      def: { ...makeState().def, name: 'very-long-agent-name-for-testing' },
-    });
-    // cellWidth 20 → nameBudget = 20-1-1-1-3 = 14
-    // displayName("very-long-agent-name-for-testing") = "Very Long Agent Name For Testing" (31 chars)
-    // truncated to 14 chars
-    const result = renderAgentCell(state, 20, mockTheme);
-    expect(result).toHaveLength(20);
-    const pctPos = result.indexOf('10%');
-    expect(pctPos).toBeGreaterThan(0);
-  });
-});
 
 // ---------------------------------------------------------------------------
 describe('isLocalPath', () => {
@@ -1267,5 +1138,139 @@ describe('findTeamsYaml', () => {
     const result = findTeamsYaml('/project');
 
     expect(result).toBe('/resolved/project/agents/teams.yaml');
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('renderDashboardDialog', () => {
+  function makeMockTheme() {
+    return {
+      fg: (color: string, text: string) => `[${color}]${text}[/${color}]`,
+      bg: (color: string, text: string) => `[bg:${color}]${text}[/bg:${color}]`,
+      bold: (text: string) => `**${text}**`,
+    };
+  }
+
+  function makeAgentState(
+    name: string,
+    overrides: Partial<AgentState> = {},
+  ): AgentState {
+    return {
+      def: {
+        name,
+        description: `${name} agent description`,
+        tools: 'read,grep,bash',
+        systemPrompt: 'You are a test agent.',
+        file: `/fake/path/${name}.md`,
+        thinking: 'medium',
+        model: 'openrouter/anthropic/claude-sonnet-4',
+        optIn: false,
+      },
+      status: 'idle',
+      task: '',
+      toolCount: 0,
+      elapsed: 0,
+      lastWork: '',
+      contextPct: 0,
+      sessionFile: null,
+      runCount: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cost: 0,
+      ...overrides,
+    };
+  }
+
+  it('returns a DashboardComponent with render, handleInput, and invalidate methods', () => {
+    const theme = makeMockTheme();
+    const done = vi.fn();
+    const result = renderDashboardDialog([], 'Test Team', theme, done);
+
+    // Verify it's a plain Component object (has render, handleInput, invalidate)
+    expect(result).toBeDefined();
+    expect(typeof result.render).toBe('function');
+    expect(typeof result.handleInput).toBe('function');
+    expect(typeof result.invalidate).toBe('function');
+  });
+
+  it('renders output with borders when width is provided', () => {
+    const theme = makeMockTheme();
+    const done = vi.fn();
+    const component = renderDashboardDialog([], 'My Team', theme, done);
+
+    // Render at width 60
+    const lines = component.render(60);
+
+    // Should have top border, content lines, bottom border
+    expect(lines.length).toBeGreaterThan(0);
+    // Top line should start with border character or contain border styling
+    expect(lines[0]).toContain('[border]');
+    // Bottom line should end with border character or contain border styling
+    expect(lines[lines.length - 1]).toContain('[border]');
+  });
+
+  it('handleInput calls done on Escape key', () => {
+    const theme = makeMockTheme();
+    const done = vi.fn();
+    const component = renderDashboardDialog([], 'Test Team', theme, done);
+
+    // Simulate ESC key press (using escape sequence \x1b)
+    component.handleInput('\x1b');
+
+    expect(done).toHaveBeenCalledWith(undefined);
+  });
+
+  it('handleInput calls done on Enter key', () => {
+    const theme = makeMockTheme();
+    const done = vi.fn();
+    const component = renderDashboardDialog([], 'Test Team', theme, done);
+
+    component.handleInput('enter');
+
+    expect(done).toHaveBeenCalledWith(undefined);
+  });
+
+  it('handleInput calls done on q key', () => {
+    const theme = makeMockTheme();
+    const done = vi.fn();
+    const component = renderDashboardDialog([], 'Test Team', theme, done);
+
+    component.handleInput('q');
+
+    expect(done).toHaveBeenCalledWith(undefined);
+  });
+
+  it('renders agent cards for each agent in the state array', () => {
+    const theme = makeMockTheme();
+    const done = vi.fn();
+    const states = [
+      makeAgentState('explore'),
+      makeAgentState('apply'),
+    ];
+    const component = renderDashboardDialog(states, 'Test Team', theme, done);
+
+    // Render and verify content includes agent names
+    const lines = component.render(80);
+    const allContent = lines.join('\n');
+    
+    expect(allContent).toContain('Explore');
+    expect(allContent).toContain('Apply');
+  });
+
+  it('invalidate method clears cached lines', () => {
+    const theme = makeMockTheme();
+    const done = vi.fn();
+    const states = [makeAgentState('test-agent')];
+    const component = renderDashboardDialog(states, 'Test Team', theme, done);
+
+    // Render once to cache
+    component.render(80);
+    
+    // Invalidate should clear cache
+    component.invalidate();
+
+    // Next render should work without errors
+    const lines = component.render(80);
+    expect(lines.length).toBeGreaterThan(0);
   });
 });

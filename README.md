@@ -91,7 +91,7 @@ Changes are structured as incremental, reviewable deltas. Each phase produces ar
 
 ### 🖥️ Real-Time Streaming
 
-Sub-agent output streams live to the Pi terminal UI, so you can watch progress as it happens. The compact dashboard widget (`/specs-grid`) shows agent status at a glance.
+Sub-agent output streams live to the Pi terminal UI, so you can watch progress as it happens. Use `/specs-dashboard` to open a detailed agent dashboard overlay showing per-agent status, metrics, and configuration.
 
 ### 💾 Session Persistence
 
@@ -356,7 +356,7 @@ User-level overrides can be placed in `~/.agents/agents/`.
 |---|---|
 | `/specs-team` | Open the team selector to switch between configured teams |
 | `/specs-list` | Display all loaded agents with their current status |
-| `/specs-grid` | Configure the number of columns (1–6) in the dashboard widget |
+| `/specs-dashboard` | Open the detailed agent dashboard overlay (per-agent cards with full state) |
 
 ---
 

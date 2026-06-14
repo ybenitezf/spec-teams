@@ -23,7 +23,7 @@
  * Commands:
  *   /specs-team           — switch active team
  *   /specs-list           — list loaded agents
- *   /specs-grid           — set grid columns for dashboard widget (1-6, default 3)
+ *   /specs-dashboard      — view detailed agent dashboard overlay
  *
  * Usage: pi -e extensions/spec-teams.ts
  */
@@ -31,14 +31,15 @@
 import { type ExtensionAPI, getMarkdownTheme, getAgentDir, parseArgs, SettingsManager, type Skill } from "@earendil-works/pi-coding-agent";
 import {
 	isLocalPath, displayName, encodeCwd, parseTeamsYaml, formatDuration, formatTokens,
-	detectStatusSignal, formatMetricsFooter, splitOutputWithSignals, computeColumns,
-	renderAgentCell, parseAgentFile, scanAgentDirs, findTeamsYaml, type AgentDef, type AgentState,
+	detectStatusSignal, formatMetricsFooter, splitOutputWithSignals,
+	parseAgentFile, scanAgentDirs, findTeamsYaml, type AgentDef, type AgentState,
 	buildOpenSpecPhases, buildIdentitySegment, buildTeamConfigSegment,
 	buildLifecycleSegment, buildExploreRelaySegment, buildGeneralTasksSegment,
 	buildRulesSegment, buildAgentCatalogSegment, type PhaseAvailability,
+	renderDashboardDialog,
 } from "./spec-teams-utils.ts";
-import { Type } from "typebox";
 import { Box, Text, Container, Markdown, Spacer } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import { spawn } from "child_process";
 import { readdirSync, readFileSync, existsSync, mkdirSync, unlinkSync, realpathSync } from "fs";
 import { join, resolve } from "path";
@@ -107,17 +108,15 @@ export default function (pi: ExtensionAPI) {
 	let allAgentDefs: AgentDef[] = [];
 	let teams: Record<string, string[]> = {};
 	let activeTeamName = "";
-	let widgetCtx: any;
 	let sessionDir = "";
 	let contextWindow = 0;
-	let maxColumns = 3;
 	let hideThinkingBlockSetting = false;
 	let discoveredTeamsPath: string | null = null;
+	let dialogComponentRef: any = null;
 
 	// ── Refresh Status Helper ────────────────────────
 
-	function refreshStatus() {
-		const ctx = widgetCtx;
+	function refreshStatus(ctx: any) {
 		if (!ctx) return;
 
 		// ── Dispatcher session totals from branch ──
@@ -179,6 +178,11 @@ export default function (pi: ExtensionAPI) {
 		const statusString = `${prefix}  ${metrics} · ${activeTeamName}`;
 
 		ctx.ui.setStatus("spec-team", statusString);
+		invalidateDialog();
+	}
+
+	function invalidateDialog() {
+		dialogComponentRef?.invalidate();
 	}
 
 	function loadAgents(cwd: string) {
@@ -238,37 +242,7 @@ export default function (pi: ExtensionAPI) {
 
 	}
 
-	function updateWidget() {
-		if (!widgetCtx) return;
 
-		widgetCtx.ui.setWidget("spec-team", (_tui: any, theme: any) => {
-			return {
-				render(width: number): string[] {
-					if (agentStates.size === 0) {
-						return ["", theme.fg("dim", "No agents found. Add .md files to agents/ or user-level agent dirs")];
-					}
-					const agents = Array.from(agentStates.values());
-					const cols = computeColumns(agentStates.size, width, maxColumns);
-
-					if (cols === 1) {
-						return ["", ...agents.map(s => renderAgentCell(s, width, theme))];
-					}
-
-					const cellWidth = Math.floor((width - (cols - 1)) / cols);
-					const lines: string[] = [];
-
-					for (let i = 0; i < agents.length; i += cols) {
-						const row = agents.slice(i, i + cols);
-						const cells = row.map(s => renderAgentCell(s, cellWidth, theme));
-						lines.push(cells.join("│"));
-					}
-
-					return ["", ...lines];
-				},
-				invalidate() {},
-			};
-		});
-	}
 
 	// ── Dispatch Agent (returns Promise) ─────────
 
@@ -321,12 +295,12 @@ export default function (pi: ExtensionAPI) {
 		state.inputTokens = 0;
 		state.outputTokens = 0;
 		state.cost = 0;
-		updateWidget();
+		invalidateDialog();
 
 		const startTime = Date.now();
 		state.timer = setInterval(() => {
 			state.elapsed = Date.now() - startTime;
-			updateWidget();
+			invalidateDialog();
 		}, 1000);
 
 		const model = state.def.model
@@ -419,7 +393,7 @@ export default function (pi: ExtensionAPI) {
 								const textOutput = orderedContent.filter(s => s.type === "text").map(s => s.content).join("");
 								const last = textOutput.split("\n").filter((l: string) => l.trim()).pop() || "";
 								state.lastWork = last;
-								updateWidget();
+								invalidateDialog();
 								pushUpdate();
 							} else if (delta?.type === "thinking_delta") {
 								const lastSeg = orderedContent[orderedContent.length - 1];
@@ -432,7 +406,7 @@ export default function (pi: ExtensionAPI) {
 							}
 						} else if (event.type === "tool_execution_start") {
 							state.toolCount++;
-							updateWidget();
+							invalidateDialog();
 							pushUpdate();
 						} else if (event.type === "message_end") {
 							const msg = event.message;
@@ -444,7 +418,7 @@ export default function (pi: ExtensionAPI) {
 								state.outputTokens += msg.usage.output || 0;
 								state.cost += msg.usage.cost?.total || 0;
 							}
-							updateWidget();
+							invalidateDialog();
 							pushUpdate();
 						} else if (event.type === "agent_end") {
 							const msgs = event.messages || [];
@@ -457,7 +431,7 @@ export default function (pi: ExtensionAPI) {
 								state.outputTokens += last.usage.output || 0;
 								state.cost += last.usage.cost?.total || 0;
 							}
-							updateWidget();
+							invalidateDialog();
 							pushUpdate();
 						}
 					} catch {}
@@ -503,7 +477,7 @@ export default function (pi: ExtensionAPI) {
 
 				const full = orderedContent.filter(s => s.type === "text").map(s => s.content).join("");
 				state.lastWork = full.split("\n").filter((l: string) => l.trim()).pop() || "";
-				updateWidget();
+				invalidateDialog();
 
 				ctx.ui.notify(
 					`${displayName(state.def.name)} ${state.status} in ${formatDuration(state.elapsed)}`,
@@ -529,7 +503,7 @@ export default function (pi: ExtensionAPI) {
 				clearInterval(state.timer);
 				state.status = "error";
 				state.lastWork = `Error: ${err.message}`;
-				updateWidget();
+				invalidateDialog();
 				resolve({
 					output: `Error spawning agent: ${err.message}`,
 					exitCode: 1,
@@ -575,8 +549,7 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				const result = await dispatchAgent(agent, task, ctx, onUpdate);
-				widgetCtx = ctx;
-				refreshStatus();
+				refreshStatus(ctx);
 
 				// TODO: Revisit truncation strategy. Preserving the tail (where the status
 				// signal block lives) is critical for the relay protocol. For now, pass the
@@ -610,8 +583,7 @@ export default function (pi: ExtensionAPI) {
 					},
 				};
 			} catch (err: any) {
-				widgetCtx = ctx;
-				refreshStatus();
+				refreshStatus(ctx);
 				return {
 					content: [{ type: "text", text: `Error dispatching to ${agent}: ${err?.message || err}` }],
 					details: { agent, task, status: "error", model: resolvedModel, elapsed: 0, exitCode: 1, fullOutput: "", inputTokens: 0, outputTokens: 0, cost: 0, toolCount: 0, contextPct: 0, thinkingText: "", orderedContent: [], hideThinkingBlock: hideThinkingBlockSetting },
@@ -830,7 +802,6 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("specs-team", {
 		description: "Select a team to work with",
 		handler: async (_args, ctx) => {
-			widgetCtx = ctx;
 			const teamNames = Object.keys(teams);
 			if (teamNames.length === 0) {
 				ctx.ui.notify("No teams defined", "warning");
@@ -848,8 +819,8 @@ export default function (pi: ExtensionAPI) {
 			const idx = options.indexOf(choice);
 			const name = teamNames[idx];
 			activateTeam(name);
-			updateWidget();
-			refreshStatus();
+			invalidateDialog();
+			refreshStatus(ctx);
 			ctx.ui.notify(`Team: ${name} — ${Array.from(agentStates.values()).map(s => displayName(s.def.name)).join(", ")}`, "info");
 		},
 	});
@@ -857,7 +828,6 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("specs-list", {
 		description: "List all loaded agents",
 		handler: async (_args, _ctx) => {
-			widgetCtx = _ctx;
 			const names = Array.from(agentStates.values())
 				.map(s => {
 					const session = s.sessionFile ? "resumed" : "new";
@@ -868,31 +838,31 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("specs-grid", {
-		description: "Set grid columns: /specs-grid <1-6>",
-		handler: async (_args, _ctx) => {
-			const arg = _args.trim();
-			if (!arg) {
-				_ctx.ui.notify(
-					`Grid columns: ${maxColumns} (default 3). Usage: /specs-grid <1-6>`,
-					"info",
-				);
-				return;
-			}
-			const num = parseInt(arg, 10);
-			if (isNaN(num) || num < 1 || num > 6) {
-				_ctx.ui.notify(
-					`Invalid column count "${arg}". Valid range: 1-6.`,
-					"warning",
-				);
-				return;
-			}
-			maxColumns = num;
-			widgetCtx = _ctx;
-			updateWidget();
-			_ctx.ui.notify(
-				`Grid columns set to ${maxColumns}.`,
-				"info",
+	pi.registerCommand("specs-dashboard", {
+		description: "View detailed agent dashboard",
+		handler: async (_args, ctx) => {
+			const states = Array.from(agentStates.values());
+
+			await ctx.ui.custom(
+				(tui, theme, _keybindings, done) => {
+					// Wrap done to clear the ref before resolving
+					const wrappedDone = (result?: any) => {
+						dialogComponentRef = null;
+						done(result);
+					};
+					const component = renderDashboardDialog(states, activeTeamName, theme, wrappedDone, tui);
+					// Set the reference when dialog opens (inside factory callback)
+					dialogComponentRef = component;
+					return component;
+				},
+				{
+					overlay: true,
+					overlayOptions: {
+						width: "60%",
+						maxHeight: "80%",
+						anchor: "center",
+					},
+				},
 			);
 		},
 	});
@@ -938,11 +908,7 @@ export default function (pi: ExtensionAPI) {
 	// ── Session Start ────────────────────────────
 
 	pi.on("session_start", async (_event, _ctx) => {
-		// Clear widgets from previous session
-		if (widgetCtx) {
-			widgetCtx.ui.setWidget("spec-team", undefined);
-		}
-		widgetCtx = _ctx;
+		_ctx = _ctx;
 		contextWindow = _ctx.model?.contextWindow || 0;
 		hideThinkingBlockSetting = SettingsManager.create(_ctx.cwd, getAgentDir()).getHideThinkingBlock();
 
@@ -965,7 +931,7 @@ export default function (pi: ExtensionAPI) {
 
 		pi.setActiveTools(["dispatch_agent"]);
 
-		refreshStatus();
+		refreshStatus(_ctx);
 		const members = Array.from(agentStates.values()).map(s => displayName(s.def.name)).join(", ");
 		const teamsPathMsg = discoveredTeamsPath
 			? `Team sets loaded from: ${discoveredTeamsPath}`
@@ -975,14 +941,12 @@ export default function (pi: ExtensionAPI) {
 			`${teamsPathMsg}\n\n` +
 			`/specs-team          Select a team\n` +
 			`/specs-list          List active agents and status\n` +
-			`/specs-grid <1-6>    Set grid columns (1-6, default 3)`,
+			`/specs-dashboard     View agent dashboard`,
 			"info",
 		);
-		updateWidget();
 	});
 
 	pi.on("agent_end", async (_event, _ctx) => {
-		widgetCtx = _ctx;
-		refreshStatus();
+		refreshStatus(_ctx);
 	});
 }
