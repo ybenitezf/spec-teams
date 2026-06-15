@@ -24,11 +24,12 @@ The CI workflow SHALL trigger on `pull_request` events targeting the `main` bran
 
 ### Requirement: CI workflow uses Node.js version matrix
 
-The CI workflow SHALL use a job matrix strategy to test against Node.js versions 18, 20, and 22.
+The CI workflow SHALL use a job matrix strategy to test against Node.js versions 20 and 22.
+Node 18 is excluded because the Pi SDK (`@earendil-works/pi-coding-agent`) requires Node >=20.6.0.
 
-#### Scenario: Three matrix jobs execute
+#### Scenario: Two matrix jobs execute
 - **WHEN** the CI workflow is triggered
-- **THEN** three parallel jobs are spawned: `18`, `20`, and `22`
+- **THEN** two parallel jobs are spawned: `20`, and `22`
 - **AND** each job executes the same steps independently
 
 #### Scenario: All matrix versions run ubuntu-latest

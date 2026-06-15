@@ -16,11 +16,12 @@
 
 - [x] 2.1 Create `.github/workflows/ci.yml` with trigger on `push` to `main` and `pull_request` targeting `main`
 - [x] 2.2 Add concurrency group (`${{ github.ref }}`) with `cancel-in-progress: true`
-- [x] 2.3 Define `test` job with `runs-on: ubuntu-latest` and `strategy.matrix.node-version: [18, 20, 22]`
+- [x] 2.3 Define `test` job with `runs-on: ubuntu-latest` and `strategy.matrix.node-version: [20, 22]` (Node 18 dropped — Pi SDK requires >=22.19.0)
 - [x] 2.4 Add `actions/checkout@v6` as first step
 - [x] 2.5 Add `actions/setup-node@v6` with `node-version: ${{ matrix.node-version }}` and `cache: 'npm'`
 - [x] 2.6 Add `npm ci` install step
-- [x] 2.7 Add `npm test` step
+- [x] 2.7 Add `npm install --no-save` of Pi SDK peer deps after ci
+- [x] 2.8 Add `npm test` step
 
 ## 3. Verify and Document
 

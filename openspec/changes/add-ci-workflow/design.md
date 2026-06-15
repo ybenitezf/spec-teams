@@ -8,7 +8,7 @@ The vitest configuration uses hardcoded absolute paths (`/home/yoel/.nvm/version
 
 **Goals:**
 - Add a single GitHub Actions workflow file that runs tests on pushes to `main` and PRs targeting `main`
-- Test across Node.js 18, 20, and 22 (the supported versions per CONTRIBUTING.md)
+- Test across Node.js 20 and 22 (Node 18 dropped — Pi SDK `@earendil-works/pi-coding-agent` requires Node >=20.6.0)
 - Fix `vitest.config.ts` to resolve Pi SDK aliases portably so tests pass in CI and on any contributor's machine
 - Prevent redundant CI runs with concurrency management
 
@@ -51,13 +51,17 @@ function resolvePkg(name: string): string {
 | Environment variables (`PI_HOME`) | Rejected | Still vendor-locked; CI shouldn't need Pi installed |
 | Keep hardcoded paths + CI env override | Rejected | Fragile — breaks for any contributor with a different Node path |
 
-### Decision 2: `npm ci` over `npm install`
+### Decision 2: npm ci + peer dep install over npm install
 
-**Chosen**: `npm ci` in CI workflows.
+**Chosen**: `npm ci` for base dependencies, then `npm install --no-save` for Pi SDK peer dependencies.
 
-`npm ci` is designed for CI: it respects `package-lock.json` exactly, deletes `node_modules` first for clean state, and fails if `package-lock.json` is missing or out of sync. `npm install` can mutate `package-lock.json` and produces non-reproducible installs.
+`npm ci` is designed for CI: it respects `package-lock.json` exactly, deletes `node_modules` first for clean state, and fails if `package-lock.json` is missing or out of sync.
 
-Peer dependency warnings from Pi SDK packages are expected — they do not cause `npm ci` to fail, and tests mock the SDK, so no actual Pi installation is needed.
+Pi SDK packages are peer dependencies (not listed in `package.json devDependencies`), so `npm ci` doesn't install them. However, the integration tests use `vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => { ... })` which requires the real module to be resolvable for `importOriginal()`. A stub is insufficient.
+
+Since `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, and `typebox` are all published to npm (as of 2026-06), we install them explicitly. The `@latest` tag forces install even when the package declares higher Node.js engine requirements — the tests mock the SDK so the packages don't need to be fully functional at runtime.
+
+For Node 20, compatible versions are pinned (0.74.x series, requires >=20.6.0). For Node 22, the latest stable versions are used.
 
 ### Decision 3: Concurrency with cancel-in-progress
 
@@ -85,6 +89,6 @@ The project has no `build` script in `package.json`. It runs as raw TypeScript v
 
 ## Risks / Trade-offs
 
-- **[Risk] `require.resolve()` may resolve Pi packages to `node_modules` if installed locally** → **Mitigation**: Pi packages are peer dependencies, not dev dependencies, so `require.resolve()` won't find them locally. Tests mock the SDK, so resolution failures in CI won't affect test execution — the aliases are only used when tests actually import from Pi packages.
-- **[Risk] Node 18 may be dropped from CI in the future** → The brief acknowledges this is acceptable. Node 18 becomes EOL April 2025 (extended support). No special handling needed now; dropping it would be a separate future change.
-- **[Risk] Peer dependency warnings in CI logs** → Cosmetic only. `npm ci` emits warnings for missing peer dependencies but exits with code 0. If these warnings clutter CI output, a future change could add `--legacy-peer-deps` or suppress them, but this is out of scope.
+- **[Risk] `require.resolve()` may resolve Pi packages to `node_modules` if installed locally** → **Mitigation**: Pi packages are peer dependencies, not dev dependencies, so `require.resolve()` won't find them locally. In CI, peer deps are installed explicitly via `npm install --no-save`.
+- **[Risk] Node 18 dropped from CI** → Node 18 is EOL (April 2025) and the Pi SDK requires Node >=20.6.0. Dropped from matrix in favor of 20/22.
+- **[Risk] Peer dependency installs failing on older Node versions** → **Mitigation**: CI uses conditional install — compatible Pi SDK versions for Node 20 (0.74.x, requires >=20.6.0), latest for Node 22. The `@latest` tag forces install regardless of engine checks.

@@ -7,7 +7,7 @@ Thank you for your interest in contributing! This guide covers development setup
 ### Prerequisites
 
 - [Pi Coding Agent](https://github.com/earendil-works/pi-coding-agent) installed globally
-- Node.js 18+
+- Node.js 20+ (22 recommended; the Pi SDK requires Node >=20.6.0)
 - [OpenSpec](https://github.com/earendil-works/OpenSpec) — required for the skill files that agents depend on
 
 ### Clone & Install
