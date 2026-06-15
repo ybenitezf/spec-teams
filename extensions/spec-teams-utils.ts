@@ -271,7 +271,23 @@ export function renderDashboardDialog(
 	const PADDING_V = 1;
 	let scrollOffset = 0;
 	let cachedWidth: number | undefined;
+	let cachedHeight: number | undefined;
 	let cachedLines: string[] | [];
+
+	/**
+	 * Compute max visible content lines based on terminal height.
+	 * Uses tui.terminal.rows if available, falls back to 30.
+	 * Formula: Math.max(5, Math.floor(rows * 0.8) - 4)
+	 * The -4 accounts for: top border (1), footer hint (1), scroll indicator/spacer (1), bottom border (1).
+	 */
+	function computeMaxVisibleLines(tui?: any): number {
+		if (!tui || !tui.terminal || typeof tui.terminal.rows !== "number") {
+			return 30; // Fallback to current behavior when tui unavailable
+		}
+		const rows = tui.terminal.rows;
+		const availableHeight = Math.floor(rows * 0.8);
+		return Math.max(5, availableHeight - 4);
+	}
 
 	/**
 	 * Build all content lines (without borders or viewport clipping).
@@ -301,9 +317,6 @@ export function renderDashboardDialog(
 			}
 		}
 
-		// Footer hint
-		lines.push(theme.fg("dim", "Press Escape, Enter, or q to close · ↑↓/jk to scroll · PgUp/PgDn for pages"));
-
 		// Add vertical padding at bottom
 		for (let i = 0; i < PADDING_V; i++) {
 			lines.push("");
@@ -319,19 +332,19 @@ export function renderDashboardDialog(
 		const innerW = Math.max(1, width - 2); // Account for left/right border chars
 		const innerContentWidth = innerW - 2 * PADDING_H;
 
-		// Rebuild content if needed
-		if (!cachedLines || cachedWidth !== width) {
+		// Rebuild content if needed (cache width and height)
+		const currentHeight = tui?.terminal?.rows;
+		if (!cachedLines || cachedWidth !== width || cachedHeight !== currentHeight) {
 			cachedLines = buildContentLines(theme, innerContentWidth);
 			cachedWidth = width;
+			cachedHeight = currentHeight;
 		}
 
 		const allContentLines = cachedLines;
 		const totalLines = allContentLines.length;
 
-		// Calculate max visible lines (height minus top/bottom borders)
-		// The TUI will tell us how many lines we can render based on maxHeight
-		// We'll use a reasonable default and let the overlay constrain it
-		const maxVisibleLines = Math.max(5, 30); // Minimum 5 lines, default 30
+		// Calculate max visible lines adaptively based on terminal height
+		const maxVisibleLines = computeMaxVisibleLines(tui);
 
 		// Clamp scroll offset
 		if (totalLines <= maxVisibleLines) {
@@ -372,6 +385,11 @@ export function renderDashboardDialog(
 			output.push(theme.fg("border", "│") + " ".repeat(innerW) + theme.fg("border", "│"));
 		}
 
+		// Pinned footer hint (always visible, outside scrollable content)
+		const footerHint = theme.fg("dim", "Press Escape, Enter, or q to close · ↑↓/jk to scroll · PgUp/PgDn for pages");
+		const footerTruncated = truncateToWidth(footerHint, innerContentWidth, "…", true);
+		output.push(theme.fg("border", "│") + " ".repeat(PADDING_H) + footerTruncated + " ".repeat(PADDING_H) + theme.fg("border", "│"));
+
 		// Scroll indicator if content overflows
 		if (totalLines > maxVisibleLines) {
 			const scrollPct = Math.round((scrollOffset / (totalLines - maxVisibleLines)) * 100);
@@ -405,7 +423,7 @@ export function renderDashboardDialog(
 
 		// Scroll actions
 		const totalLines = cachedLines ? cachedLines.length : 0;
-		const maxVisibleLines = 30;
+		const maxVisibleLines = computeMaxVisibleLines(tui);
 
 		if (matchesKey(data, Key.up) || data === "k" || data === "K") {
 			if (scrollOffset > 0) {
@@ -444,6 +462,7 @@ export function renderDashboardDialog(
 	 */
 	function invalidate(): void {
 		cachedWidth = undefined;
+		cachedHeight = undefined;
 		cachedLines = undefined;
 	}
 
