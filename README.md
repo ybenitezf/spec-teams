@@ -4,6 +4,7 @@
 >
 > *Built on [disler's agent-team.ts](https://github.com/disler/pi-vs-claude-code/blob/main/extensions/agent-team.ts) foundation.*
 
+[![CI](https://github.com/ybenitezf/spec-teams/actions/workflows/ci.yml/badge.svg)](https://github.com/ybenitezf/spec-teams/actions/workflows/ci.yml)
 [![Pi Extension](https://img.shields.io/badge/Pi-Extension-6C47FF)](https://github.com/earendil-works/pi-coding-agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
