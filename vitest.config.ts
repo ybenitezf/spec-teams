@@ -1,7 +1,10 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 /**
  * Retrieve the global npm root directory (where "npm install -g" puts
@@ -27,59 +30,86 @@ function pkgExists(dir: string): boolean {
 	return existsSync(resolve(dir, "package.json"));
 }
 
+const STUB_DIR = resolve(__dirname, "tests", "__stubs__");
+
+// ── Package resolution ─────────────────────────
+
 /**
- * Resolve a package directory portably across environments.
+ * Resolve @earendil-works/pi-coding-agent to the real package.
  *
- * Strategy:
- * 1. Check local node_modules (works when packages are installed
- *    as project dependencies or --legacy-peer-deps).
- * 2. Check the global npm root (for globally-installed packages).
- * 3. If the package is the Pi coding agent itself, look for it
- *    under the global root.
- * 4. For packages that live *inside* pi-coding-agent's own
- *    dependencies (@earendil-works/pi-tui, @earendil-works/pi-ai,
- *    typebox), look under pi-coding-agent/node_modules.
- *
- * If none of these succeed, fall back to the local node_modules
- * stub directory so vitest can at least load its config (tests
- * that actually import the mocked package will fail with a clear
- * error if the package is genuinely missing).
+ * This package is needed at full fidelity because the integration tests
+ * use vi.mock(..., async (importOriginal) => { ... }) which requires
+ * the real module to be resolvable.
  */
-function resolvePkg(name: string): string {
-	// 1. Local node_modules (preferred — portable, works in CI with
-	//    --legacy-peer-deps or when packages are real dependencies)
-	const localDir = resolve("node_modules", name);
+function resolvePiCodingAgent(): string {
+	// 1. Local node_modules
+	const localDir = resolve(__dirname, "node_modules/@earendil-works/pi-coding-agent");
 	if (pkgExists(localDir)) {
 		return localDir;
 	}
-
-	// 2. Global root
+	// 2. Global npm root
 	if (_globalRoot) {
-		const globalDir = resolve(_globalRoot, name);
+		const globalDir = resolve(_globalRoot, "@earendil-works/pi-coding-agent");
 		if (pkgExists(globalDir)) {
 			return globalDir;
 		}
+	}
+	// 3. Fallback stub
+	return resolve(STUB_DIR, "pi-coding-agent.ts");
+}
 
-		// 3. Some peer deps (pi-tui, pi-ai, typebox) live inside
-		//    pi-coding-agent's own node_modules rather than being
-		//    installed globally themselves.
-		const piCodingAgentDir = resolve(
+/**
+ * Resolve @earendil-works/pi-tui.
+ *
+ * This is a peer dependency not installed in CI. When not found, fall
+ * back to the test stub. The integration tests do mock this with
+ * vi.mock(), so the stub only needs to exist for module resolution.
+ */
+function resolvePiTui(): string {
+	// 1. Local node_modules
+	const localDir = resolve(__dirname, "node_modules/@earendil-works/pi-tui");
+	if (pkgExists(localDir)) {
+		return localDir;
+	}
+	// 2. Global root (not typically installed globally)
+	if (_globalRoot) {
+		const globalDir = resolve(_globalRoot, "@earendil-works/pi-tui");
+		if (pkgExists(globalDir)) {
+			return globalDir;
+		}
+		// 3. Nested inside pi-coding-agent/node_modules/
+		const nestedDir = resolve(
 			_globalRoot,
-			"@earendil-works/pi-coding-agent",
+			"@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui",
 		);
-		if (pkgExists(piCodingAgentDir)) {
-			const nestedDir = resolve(piCodingAgentDir, "node_modules", name);
-			if (pkgExists(nestedDir)) {
-				return nestedDir;
-			}
+		if (pkgExists(nestedDir)) {
+			return nestedDir;
 		}
 	}
+	// 4. Fallback stub
+	return resolve(STUB_DIR, "pi-tui.ts");
+}
 
-	// 4. Last resort — return the (possibly empty) local node_modules
-	//    stub directory. vitest can still load its config; tests that
-	//    genuinely import the package will produce a clear resolution
-	//    error at runtime.
-	return localDir;
+/**
+ * Resolve typebox.
+ *
+ * Same pattern as pi-tui — peer dependency, falls back to stub.
+ */
+function resolveTypebox(): string {
+	const localDir = resolve(__dirname, "node_modules/typebox");
+	if (pkgExists(localDir)) {
+		return localDir;
+	}
+	if (_globalRoot) {
+		const nestedDir = resolve(
+			_globalRoot,
+			"@earendil-works/pi-coding-agent/node_modules/typebox",
+		);
+		if (pkgExists(nestedDir)) {
+			return nestedDir;
+		}
+	}
+	return resolve(STUB_DIR, "typebox.ts");
 }
 
 export default defineConfig({
@@ -87,15 +117,11 @@ export default defineConfig({
 		include: ["tests/**/*.test.ts"],
 		environment: "node",
 	},
-	// Alias external packages to their installed locations
 	resolve: {
 		alias: {
-			"@earendil-works/pi-coding-agent": resolvePkg(
-				"@earendil-works/pi-coding-agent",
-			),
-			"@earendil-works/pi-tui": resolvePkg("@earendil-works/pi-tui"),
-			"@earendil-works/pi-ai": resolvePkg("@earendil-works/pi-ai"),
-			typebox: resolvePkg("typebox"),
+			"@earendil-works/pi-coding-agent": resolvePiCodingAgent(),
+			"@earendil-works/pi-tui": resolvePiTui(),
+			typebox: resolveTypebox(),
 		},
 	},
 });
