@@ -33,7 +33,11 @@ jobs:
         run: npm ci
 
       - name: Install peer dependencies (Pi SDK)
-        run: npm install --no-save @earendil-works/pi-coding-agent @earendil-works/pi-tui typebox
+        # The Pi SDK declares engines >=22.19.0 but we only need these packages
+        # for module resolution (vi.mock importOriginal). Use --ignore-engines
+        # to install on older Node versions where the packages are resolvable
+        # even if not fully functional — the tests mock the SDK.
+        run: npm install --no-save --ignore-engines @earendil-works/pi-coding-agent @earendil-works/pi-tui typebox
 
       - name: Run tests
         run: npm test
