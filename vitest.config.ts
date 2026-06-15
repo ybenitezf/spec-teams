@@ -1,24 +1,135 @@
+import { execSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
-import { resolve } from "path";
-import { fileURLToPath } from "url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const PI_CODING_AGENT = "/home/yoel/.nvm/versions/node/v24.15.0/lib/node_modules/@earendil-works/pi-coding-agent";
-const PI_TUI = resolve(PI_CODING_AGENT, "node_modules/@earendil-works/pi-tui");
+
+/**
+ * Retrieve the global npm root directory (where "npm install -g" puts
+ * packages). Returns undefined if the command fails or returns empty.
+ */
+function getGlobalRoot(): string | undefined {
+	try {
+		const out = execSync("npm root -g", { encoding: "utf-8" })
+			.toString()
+			.trim();
+		return out || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+const _globalRoot = getGlobalRoot();
+
+/**
+ * Check whether a package directory exists under a given root.
+ */
+function pkgExists(dir: string): boolean {
+	return existsSync(resolve(dir, "package.json"));
+}
+
+const STUB_DIR = resolve(__dirname, "tests", "__stubs__");
+
+// ── Package resolution ─────────────────────────
+
+/**
+ * Resolve @earendil-works/pi-coding-agent to the real package.
+ *
+ * This package is needed at full fidelity because the integration tests
+ * use vi.mock(..., async (importOriginal) => { ... }) which requires
+ * the real module to be resolvable.
+ *
+ * Tries local node_modules (CI installs peer deps here) then global npm root.
+ * Throws if not found — the stub is insufficient because importOriginal
+ * needs the real module to mock properly.
+ */
+function resolvePiCodingAgent(): string {
+	// 1. Local node_modules (also where CI installs peer deps via --no-save)
+	const localDir = resolve(__dirname, "node_modules/@earendil-works/pi-coding-agent");
+	if (pkgExists(localDir)) {
+		return localDir;
+	}
+	// 2. Global npm root (typical for local dev with pi installed globally)
+	if (_globalRoot) {
+		const globalDir = resolve(_globalRoot, "@earendil-works/pi-coding-agent");
+		if (pkgExists(globalDir)) {
+			return globalDir;
+		}
+	}
+	// 3. Not found — integration tests require the real module for importOriginal
+	throw new Error(
+		"@earendil-works/pi-coding-agent is not installed. " +
+		"Install it globally (npm install -g @earendil-works/pi-coding-agent) " +
+		"or run: npm install --no-save @earendil-works/pi-coding-agent"
+	);
+}
+
+/**
+ * Resolve @earendil-works/pi-tui.
+ *
+ * This is a peer dependency not installed in CI. When not found, fall
+ * back to the test stub. The integration tests do mock this with
+ * vi.mock(), so the stub only needs to exist for module resolution.
+ */
+function resolvePiTui(): string {
+	// 1. Local node_modules
+	const localDir = resolve(__dirname, "node_modules/@earendil-works/pi-tui");
+	if (pkgExists(localDir)) {
+		return localDir;
+	}
+	// 2. Global root (not typically installed globally)
+	if (_globalRoot) {
+		const globalDir = resolve(_globalRoot, "@earendil-works/pi-tui");
+		if (pkgExists(globalDir)) {
+			return globalDir;
+		}
+		// 3. Nested inside pi-coding-agent/node_modules/
+		const nestedDir = resolve(
+			_globalRoot,
+			"@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui",
+		);
+		if (pkgExists(nestedDir)) {
+			return nestedDir;
+		}
+	}
+	// 4. Fallback stub
+	return resolve(STUB_DIR, "pi-tui.ts");
+}
+
+/**
+ * Resolve typebox.
+ *
+ * Same pattern as pi-tui — peer dependency, falls back to stub.
+ */
+function resolveTypebox(): string {
+	const localDir = resolve(__dirname, "node_modules/typebox");
+	if (pkgExists(localDir)) {
+		return localDir;
+	}
+	if (_globalRoot) {
+		const nestedDir = resolve(
+			_globalRoot,
+			"@earendil-works/pi-coding-agent/node_modules/typebox",
+		);
+		if (pkgExists(nestedDir)) {
+			return nestedDir;
+		}
+	}
+	return resolve(STUB_DIR, "typebox.ts");
+}
 
 export default defineConfig({
 	test: {
 		include: ["tests/**/*.test.ts"],
 		environment: "node",
 	},
-	// Alias external packages to their installed locations
 	resolve: {
 		alias: {
-			"@earendil-works/pi-coding-agent": PI_CODING_AGENT,
-			"@earendil-works/pi-tui": PI_TUI,
-			"@earendil-works/pi-ai": resolve(PI_CODING_AGENT, "node_modules/@earendil-works/pi-ai"),
-			// typebox is a peer dep but its local dir is empty — point to the one in pi-coding-agent
-			typebox: resolve(PI_CODING_AGENT, "node_modules/typebox"),
+			"@earendil-works/pi-coding-agent": resolvePiCodingAgent(),
+			"@earendil-works/pi-tui": resolvePiTui(),
+			typebox: resolveTypebox(),
 		},
 	},
 });
