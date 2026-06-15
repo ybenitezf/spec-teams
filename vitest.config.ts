@@ -40,22 +40,30 @@ const STUB_DIR = resolve(__dirname, "tests", "__stubs__");
  * This package is needed at full fidelity because the integration tests
  * use vi.mock(..., async (importOriginal) => { ... }) which requires
  * the real module to be resolvable.
+ *
+ * Tries local node_modules (CI installs peer deps here) then global npm root.
+ * Throws if not found — the stub is insufficient because importOriginal
+ * needs the real module to mock properly.
  */
 function resolvePiCodingAgent(): string {
-	// 1. Local node_modules
+	// 1. Local node_modules (also where CI installs peer deps via --no-save)
 	const localDir = resolve(__dirname, "node_modules/@earendil-works/pi-coding-agent");
 	if (pkgExists(localDir)) {
 		return localDir;
 	}
-	// 2. Global npm root
+	// 2. Global npm root (typical for local dev with pi installed globally)
 	if (_globalRoot) {
 		const globalDir = resolve(_globalRoot, "@earendil-works/pi-coding-agent");
 		if (pkgExists(globalDir)) {
 			return globalDir;
 		}
 	}
-	// 3. Fallback stub
-	return resolve(STUB_DIR, "pi-coding-agent.ts");
+	// 3. Not found — integration tests require the real module for importOriginal
+	throw new Error(
+		"@earendil-works/pi-coding-agent is not installed. " +
+		"Install it globally (npm install -g @earendil-works/pi-coding-agent) " +
+		"or run: npm install --no-save @earendil-works/pi-coding-agent"
+	);
 }
 
 /**

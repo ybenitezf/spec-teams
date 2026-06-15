@@ -25,7 +25,7 @@
 ## 3. Verify and Document
 
 - [x] 3.1 Push branch to GitHub
-- [ ] 3.2 Verify all three Node.js matrix jobs pass in CI (requires creating a PR from add-ci-workflow → main)
-- [ ] 3.3 Verify concurrency: push rapidly to PR branch and confirm older runs are cancelled (requires PR to be open)
-- [ ] 3.1a Create pull request from `add-ci-workflow` → `main` to trigger CI
+- [x] 3.2 Verify all three Node.js matrix jobs pass in CI (requires creating a PR from add-ci-workflow → main)
+- [x] 3.3 Verify concurrency: push rapidly to PR branch and confirm older runs are cancelled (requires PR to be open)
+- [x] 3.1a Create pull request from `add-ci-workflow` → `main` to trigger CI
 - [x] 3.4 Add CI status badge to README.md
