@@ -246,13 +246,54 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Dispatch Agent (returns Promise) ─────────
 
+	// ── Widget Helpers ──────────────────────────
+
+	/**
+	 * Build the widget content string array for a sub-agent.
+	 *
+	 * Line 1: `● {displayName} ({formattedElapsed}) - {status}`
+	 * Lines 2+: Last 15 lines of text output, or Thinking... indication
+	 */
+	function buildWidgetContent(
+		agentName: string,
+		elapsed: number,
+		status: "running" | "✓ completed",
+		textOutput: string,
+		hideThinkingBlock: boolean,
+	): string[] {
+		const lines: string[] = [];
+		const statusText = status === "running" ? "running" : "✓ completed";
+		lines.push(`\u25CF ${displayName(agentName)} (${formatDuration(elapsed)}) - ${statusText}`);
+
+		if (textOutput) {
+			const outputLines = textOutput.split("\n");
+			// Take last 15 lines, optionally adding a "..." prefix if truncated
+			const last15 = outputLines.slice(-15);
+			if (outputLines.length > 15) {
+				lines.push("...");
+			}
+			lines.push(...last15);
+		} else if (hideThinkingBlock) {
+			lines.push("\u25B6 Thinking...");
+		} else {
+			lines.push("Thinking...");
+		}
+
+		return lines;
+	}
+
+	// ── Dispatch Agent (returns Promise) ─────────
+
 	function dispatchAgent(
 		agentName: string,
 		task: string,
 		ctx: any,
 		onUpdate?: (update: any) => void,
+		hideThinkingBlock?: boolean,
 	): Promise<{ output: string; exitCode: number; elapsed: number; inputTokens: number; outputTokens: number; cost: number; toolCount: number; contextPct: number; thinkingText: string; hideThinkingBlock: boolean; orderedContent: {type: "text" | "thinking", content: string}[] }> {
 		const key = agentName.toLowerCase();
+		const widgetKey = `spec-team-${agentName.toLowerCase().replace(/\s+/g, "-")}`;
+		let lastWidgetUpdate = 0;
 		const state = agentStates.get(key);
 		if (!state) {
 			return Promise.resolve({
@@ -270,6 +311,8 @@ export default function (pi: ExtensionAPI) {
 			});
 		}
 
+		const hideThinking = hideThinkingBlock ?? hideThinkingBlockSetting;
+
 		if (state.status === "running") {
 			return Promise.resolve({
 				output: `Agent "${displayName(state.def.name)}" is already running. Wait for it to finish.`,
@@ -281,7 +324,7 @@ export default function (pi: ExtensionAPI) {
 				toolCount: 0,
 				contextPct: 0,
 				thinkingText: "",
-				hideThinkingBlock: hideThinkingBlockSetting,
+				hideThinkingBlock: hideThinking,
 				orderedContent: [],
 			});
 		}
@@ -359,9 +402,22 @@ export default function (pi: ExtensionAPI) {
 					inputTokens: state.inputTokens,
 					outputTokens: state.outputTokens,
 					cost: state.cost,
-					hideThinkingBlock: hideThinkingBlockSetting,
+					hideThinkingBlock: hideThinking,
 				},
 			});
+		};
+
+		// Widget throttle helper — updates widget at most every 150ms
+		// First delta triggers immediate update (no throttle check)
+		// Completion/state changes trigger immediate update
+		const pushWidgetUpdate = (isCompletion?: boolean) => {
+			if (!ctx.hasUI) return;
+			const now = Date.now();
+			if (!isCompletion && lastWidgetUpdate > 0 && now - lastWidgetUpdate < 150) return;
+			lastWidgetUpdate = now;
+			const textOutput = orderedContent.filter(s => s.type === "text").map(s => s.content).join("");
+			const status: "running" | "✓ completed" = isCompletion ? "✓ completed" : "running";
+			ctx.ui.setWidget(widgetKey, buildWidgetContent(agentName, state.elapsed, status, textOutput, hideThinking));
 		};
 
 		return new Promise((resolve) => {
@@ -395,6 +451,7 @@ export default function (pi: ExtensionAPI) {
 								state.lastWork = last;
 								invalidateDialog();
 								pushUpdate();
+								pushWidgetUpdate();
 							} else if (delta?.type === "thinking_delta") {
 								const lastSeg = orderedContent[orderedContent.length - 1];
 								if (lastSeg?.type === "thinking") {
@@ -403,6 +460,7 @@ export default function (pi: ExtensionAPI) {
 									orderedContent.push({ type: "thinking", content: delta.delta || "" });
 								}
 								pushUpdate();
+								pushWidgetUpdate();
 							}
 						} else if (event.type === "tool_execution_start") {
 							state.toolCount++;
@@ -477,6 +535,12 @@ export default function (pi: ExtensionAPI) {
 
 				const full = orderedContent.filter(s => s.type === "text").map(s => s.content).join("");
 				state.lastWork = full.split("\n").filter((l: string) => l.trim()).pop() || "";
+
+				// Clear widget immediately on completion (Decision 7: no completed linger period)
+				if (ctx.hasUI) {
+					ctx.ui.setWidget(widgetKey, []);
+				}
+
 				invalidateDialog();
 
 				ctx.ui.notify(
@@ -494,7 +558,7 @@ export default function (pi: ExtensionAPI) {
 					toolCount: state.toolCount,
 					contextPct: state.contextPct,
 					thinkingText: orderedContent.filter(s => s.type === "thinking").map(s => s.content).join(""),
-					hideThinkingBlock: hideThinkingBlockSetting,
+					hideThinkingBlock: hideThinking,
 					orderedContent: [...orderedContent],
 				});
 			});
@@ -503,6 +567,10 @@ export default function (pi: ExtensionAPI) {
 				clearInterval(state.timer);
 				state.status = "error";
 				state.lastWork = `Error: ${err.message}`;
+				// Clear widget on error (same as completion)
+				if (ctx.hasUI) {
+					ctx.ui.setWidget(widgetKey, []);
+				}
 				invalidateDialog();
 				resolve({
 					output: `Error spawning agent: ${err.message}`,
@@ -514,7 +582,7 @@ export default function (pi: ExtensionAPI) {
 					toolCount: state.toolCount,
 					contextPct: state.contextPct,
 					thinkingText: orderedContent.filter(s => s.type === "thinking").map(s => s.content).join(""),
-					hideThinkingBlock: hideThinkingBlockSetting,
+					hideThinkingBlock: hideThinking,
 					orderedContent: [...orderedContent],
 				});
 			});
@@ -548,7 +616,11 @@ export default function (pi: ExtensionAPI) {
 					});
 				}
 
-				const result = await dispatchAgent(agent, task, ctx, onUpdate);
+				// In TUI mode, suppress further onUpdate calls — the widget handles live display.
+				// In non-TUI modes, pass onUpdate through so inline streaming works as before.
+				const streamingOnUpdate = ctx.hasUI ? undefined : onUpdate;
+
+				const result = await dispatchAgent(agent, task, ctx, streamingOnUpdate, hideThinkingBlockSetting);
 				refreshStatus(ctx);
 
 				// TODO: Revisit truncation strategy. Preserving the tail (where the status
@@ -579,7 +651,7 @@ export default function (pi: ExtensionAPI) {
 						contextPct: result.contextPct,
 						thinkingText: result.thinkingText,
 						orderedContent: result.orderedContent,
-						hideThinkingBlock: hideThinkingBlockSetting,
+						hideThinkingBlock: result.hideThinkingBlock,
 					},
 				};
 			} catch (err: any) {
@@ -911,6 +983,16 @@ export default function (pi: ExtensionAPI) {
 		_ctx = _ctx;
 		contextWindow = _ctx.model?.contextWindow || 0;
 		hideThinkingBlockSetting = SettingsManager.create(_ctx.cwd, getAgentDir()).getHideThinkingBlock();
+
+		// Clear any stale spec-team widgets from previous sessions
+		// Iterate known agent names and clear their widget keys
+		if (_ctx.hasUI) {
+			const agentNames = Array.from(agentStates.keys());
+			for (const name of agentNames) {
+				const widgetKey = `spec-team-${name.replace(/\s+/g, "-")}`;
+				_ctx.ui.setWidget(widgetKey, []);
+			}
+		}
 
 		loadAgents(_ctx.cwd);
 
