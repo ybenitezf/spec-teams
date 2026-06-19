@@ -128,6 +128,27 @@ export function encodeCwd(cwd: string): string {
 	return `--${encoded}--`;
 }
 
+// ── injectEncodedCwd ─────────────────────────────
+
+/**
+ * Prepends an `encoded-cwd: <value>\n\n` prefix to the task string for
+ * explore and propose agents so they don't need to guess the encoding.
+ *
+ * For other agents, returns the task unchanged.
+ *
+ * @param agentName - The agent name (case-insensitive)
+ * @param task - The original task string
+ * @param encodedCwd - The pre-computed encoded cwd value to inject
+ * @returns The task with the prefix prepended for explore/propose, or the original task
+ */
+export function injectEncodedCwd(agentName: string, task: string, encodedCwd: string): string {
+	const lower = agentName.toLowerCase();
+	if (lower === "explore" || lower === "propose") {
+		return `encoded-cwd: ${encodedCwd}\n\n${task}`;
+	}
+	return task;
+}
+
 // ── parseTeamsYaml ───────────────────────────────
 
 export function parseTeamsYaml(raw: string): Record<string, string[]> {

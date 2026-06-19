@@ -95,7 +95,17 @@ The user is ready for a formal change proposal.
 
 Before returning, you MUST:
 1. Choose a change name (kebab-case) for the exploration topic
-2. Write a findings file to `~/.pi/spec-teams/<encoded-cwd>/explore-<change-name>.md` where `<encoded-cwd>` is the `encodeCwd(cwd)` representation of the project's absolute working directory
+2. Write a findings file to `~/.pi/spec-teams/<encoded-cwd>/explore-<change-name>.md` where `<encoded-cwd>` is extracted from the task string prefix (`encoded-cwd: <value>`) as the first line of the task string
+
+   **Extracting `<encoded-cwd>` from the task string:**
+   - The extension prepends `encoded-cwd: <value>\n\n` to the task string before dispatch
+   - Parse the first line of your task string; if it matches `encoded-cwd:`, use the value as `<encoded-cwd>`
+   - Treat the remainder (after the blank separator line) as the actual task
+
+   **Fallback algorithm** (if the `encoded-cwd:` prefix is not present in the task string):
+   - Step 1: Strip the leading `/` from the project's absolute working directory
+   - Step 2: Replace `/`, `\`, and `:` with `-`
+   - Step 3: Wrap the result in `--...--`
 
 The findings file MUST document:
 - **Problem space understanding** — what problem is being solved, why now
@@ -163,8 +173,18 @@ Status: blocked
 You have the `write` tool, but it is RESTRICTED:
 
 - **ALLOWED**: Writing to `~/.pi/spec-teams/<encoded-cwd>/explore-<name>.md` (findings file
-  for propose agent handoff), where `<encoded-cwd>` is the `encodeCwd(cwd)` representation of the project's absolute working directory.
+  for propose agent handoff), where `<encoded-cwd>` is extracted from the task string prefix (`encoded-cwd: <value>`).
   In bash commands, use `$HOME/.pi/spec-teams/<encoded-cwd>/` for reliable path expansion.
+  
+  **Extracting `<encoded-cwd>` from the task string:**
+  - The extension prepends `encoded-cwd: <value>\n\n` to the task string before dispatch
+  - Parse the first line of your task string; if it matches `encoded-cwd:`, use the value as `<encoded-cwd>`
+  - Treat the remainder (after the blank separator line) as the actual task
+  
+  **Fallback algorithm** (if the `encoded-cwd:` prefix is not present):
+  - Step 1: Strip the leading `/` from the project's absolute working directory
+  - Step 2: Replace `/`, `\`, and `:` with `-`
+  - Step 3: Wrap the result in `--...--`
 - **FORBIDDEN**: Creating or modifying OpenSpec artifacts (proposal.md,
   design.md, tasks.md, spec files). That is the propose agent's job.
 - **FORBIDDEN**: Modifying any existing project source files. You investigate

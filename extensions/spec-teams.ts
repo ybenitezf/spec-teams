@@ -30,7 +30,7 @@
 
 import { type ExtensionAPI, getMarkdownTheme, getAgentDir, parseArgs, SettingsManager, type Skill } from "@earendil-works/pi-coding-agent";
 import {
-	isLocalPath, displayName, encodeCwd, parseTeamsYaml, formatDuration, formatTokens,
+	isLocalPath, displayName, encodeCwd, injectEncodedCwd, parseTeamsYaml, formatDuration, formatTokens,
 	detectStatusSignal, formatMetricsFooter, splitOutputWithSignals,
 	parseAgentFile, scanAgentDirs, findTeamsYaml, type AgentDef, type AgentState,
 	buildOpenSpecPhases, buildIdentitySegment, buildTeamConfigSegment,
@@ -112,6 +112,7 @@ export default function (pi: ExtensionAPI) {
 	let contextWindow = 0;
 	let hideThinkingBlockSetting = false;
 	let discoveredTeamsPath: string | null = null;
+	let currentEncodedCwd = "";
 	let dialogComponentRef: any = null;
 
 	// ── Refresh Status Helper ────────────────────────
@@ -187,7 +188,8 @@ export default function (pi: ExtensionAPI) {
 
 	function loadAgents(cwd: string) {
 		// Create session storage dir
-		sessionDir = join(homedir(), ".pi", "spec-teams", encodeCwd(cwd));
+		currentEncodedCwd = encodeCwd(cwd);
+		sessionDir = join(homedir(), ".pi", "spec-teams", currentEncodedCwd);
 		if (!existsSync(sessionDir)) {
 			mkdirSync(sessionDir, { recursive: true });
 		}
@@ -243,8 +245,6 @@ export default function (pi: ExtensionAPI) {
 	}
 
 
-
-	// ── Dispatch Agent (returns Promise) ─────────
 
 	// ── Widget Helpers ──────────────────────────
 
@@ -375,7 +375,9 @@ export default function (pi: ExtensionAPI) {
 			args.push("-c");
 		}
 
-		args.push(task);
+		// Inject encoded-cwd prefix for explore/propose agents
+		const injectedTask = injectEncodedCwd(agentName, task, currentEncodedCwd);
+		args.push(injectedTask);
 
 		const orderedContent: {type: "text" | "thinking", content: string}[] = [];
 
@@ -1000,6 +1002,11 @@ export default function (pi: ExtensionAPI) {
 		if (existsSync(sessionDir)) {
 			for (const f of readdirSync(sessionDir)) {
 				if (f.endsWith(".json")) {
+					try { unlinkSync(join(sessionDir, f)); } catch {}
+				}
+				// Clean up stale findings files from previous sessions
+				// Only match explore-*.md to avoid deleting non-findings .md files
+				if (f.startsWith("explore-") && f.endsWith(".md")) {
 					try { unlinkSync(join(sessionDir, f)); } catch {}
 				}
 			}

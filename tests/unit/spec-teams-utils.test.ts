@@ -60,6 +60,7 @@ import {
   parseTeamsYaml,
   displayName,
   encodeCwd,
+  injectEncodedCwd,
   parseAgentFile,
   formatDuration,
   formatTokens,
@@ -171,6 +172,68 @@ describe('encodeCwd', () => {
   it('empty string', () => {
     // stripped = "" → encoded = "" → "----"
     expect(encodeCwd('')).toBe('----');
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe('injectEncodedCwd', () => {
+  const testEncodedCwd = '--home-user-projects-my-app--';
+  const testTask = 'Investigate the auth system';
+
+  it('prepends prefix for explore agent', () => {
+    const result = injectEncodedCwd('explore', testTask, testEncodedCwd);
+    expect(result).toBe(
+      `encoded-cwd: ${testEncodedCwd}\n\n${testTask}`,
+    );
+  });
+
+  it('prepends prefix for propose agent', () => {
+    const result = injectEncodedCwd('propose', testTask, testEncodedCwd);
+    expect(result).toBe(
+      `encoded-cwd: ${testEncodedCwd}\n\n${testTask}`,
+    );
+  });
+
+  it('passes through unchanged for worker agent', () => {
+    const result = injectEncodedCwd('worker', testTask, testEncodedCwd);
+    expect(result).toBe(testTask);
+  });
+
+  it('passes through unchanged for apply agent', () => {
+    const result = injectEncodedCwd('apply', testTask, testEncodedCwd);
+    expect(result).toBe(testTask);
+  });
+
+  it('passes through unchanged for archive agent', () => {
+    const result = injectEncodedCwd('archive', testTask, testEncodedCwd);
+    expect(result).toBe(testTask);
+  });
+
+  it('is case-insensitive for agent name (Explore)', () => {
+    const result = injectEncodedCwd('Explore', testTask, testEncodedCwd);
+    expect(result).toContain('encoded-cwd:');
+    expect(result).toContain('Investigate the auth system');
+  });
+
+  it('prepends correct format: encoded-cwd: <value>\n\n<task>', () => {
+    const result = injectEncodedCwd('explore', testTask, testEncodedCwd);
+    // The prefix should be the first line
+    const lines = result.split('\n');
+    expect(lines[0]).toBe(`encoded-cwd: ${testEncodedCwd}`);
+    // Line 2 should be empty (blank separator)
+    expect(lines[1]).toBe('');
+    // Line 3 should start the original task
+    expect(lines.slice(2).join('\n')).toBe(testTask);
+  });
+
+  it('handles empty task string', () => {
+    const result = injectEncodedCwd('explore', '', testEncodedCwd);
+    expect(result).toBe(`encoded-cwd: ${testEncodedCwd}\n\n`);
+  });
+
+  it('handles empty encodedCwd', () => {
+    const result = injectEncodedCwd('explore', testTask, '');
+    expect(result).toBe(`encoded-cwd: \n\n${testTask}`);
   });
 });
 

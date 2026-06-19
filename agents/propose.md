@@ -66,7 +66,16 @@ alternatives considered, constraints discovered, edge cases, and user motivation
 ### Check for findings file
 
 1. Determine the change name from the task string (the **Change name** field)
-2. Check if `~/.pi/spec-teams/<encoded-cwd>/explore-<change-name>.md` exists using `bash: ls $HOME/.pi/spec-teams/<encoded-cwd>/explore-<change-name>.md`, where `<encoded-cwd>` is the `encodeCwd(cwd)` representation of the project's absolute working directory
+2. Extract `<encoded-cwd>` from the task string prefix:
+   - The extension prepends `encoded-cwd: <value>\n\n` to the task string before dispatch
+   - Parse the first line of your task string; if it matches `encoded-cwd:`, use the value as `<encoded-cwd>`
+   - Treat the remainder (after the blank separator line) as the actual task
+3. Check if `~/.pi/spec-teams/<encoded-cwd>/explore-<change-name>.md` exists using `bash: ls $HOME/.pi/spec-teams/<encoded-cwd>/explore-<change-name>.md`, using the extracted `<encoded-cwd>` value
+
+   **Fallback algorithm** (if the `encoded-cwd:` prefix is not present in the task string):
+   - Step 1: Strip the leading `/` from the project's absolute working directory
+   - Step 2: Replace `/`, `\`, and `:` with `-`
+   - Step 3: Wrap the result in `--...--`
 
 ### If findings file exists
 
